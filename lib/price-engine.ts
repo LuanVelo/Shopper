@@ -2,6 +2,8 @@ import { normalizeItemName } from "@/lib/normalization";
 import { scrapeExtra } from "@/lib/scrapers/extra";
 import { scrapePrezunic } from "@/lib/scrapers/prezunic";
 import { scrapeZonaSul } from "@/lib/scrapers/zonasul";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import {
   CalculationResponse,
   ItemPriceSummary,
@@ -12,16 +14,32 @@ import {
 } from "@/types";
 
 type CacheStore = Map<string, PriceSnapshot>;
+type InflightStore = Map<string, Promise<Offer[]>>;
 
 declare global {
   // eslint-disable-next-line no-var
   var __priceCache__: CacheStore | undefined;
   // eslint-disable-next-line no-var
+  var __inflightScrapes__: InflightStore | undefined;
+  // eslint-disable-next-line no-var
+  var __priceCacheLoaded__: boolean | undefined;
+  // eslint-disable-next-line no-var
   var __lastUpdate__: string | undefined;
 }
 
 const priceCache: CacheStore = global.__priceCache__ ?? new Map<string, PriceSnapshot>();
+const inflightScrapes: InflightStore = global.__inflightScrapes__ ?? new Map<string, Promise<Offer[]>>();
 global.__priceCache__ = priceCache;
+global.__inflightScrapes__ = inflightScrapes;
+
+const CACHE_DIR = path.join(process.cwd(), "data", "price-cache");
+const CACHE_FILE = path.join(CACHE_DIR, "snapshots.json");
+
+interface PersistedCacheFile {
+  version: 1;
+  updatedAt: string | null;
+  snapshots: PriceSnapshot[];
+}
 
 function makeCacheKey(source: string, term: string): string {
   return `${source}|${term}`;
@@ -37,34 +55,73 @@ async function fetchOffers(term: string): Promise<Offer[]> {
   return [...prezunic, ...zonasul, ...extra];
 }
 
+async function ensurePersistentCacheLoaded(): Promise<void> {
+  if (global.__priceCacheLoaded__) return;
+
+  try {
+    const raw = await fs.readFile(CACHE_FILE, "utf-8");
+    const parsed = JSON.parse(raw) as PersistedCacheFile;
+    if (Array.isArray(parsed.snapshots)) {
+      for (const snapshot of parsed.snapshots) {
+        const key = makeCacheKey(snapshot.source, snapshot.term);
+        priceCache.set(key, snapshot);
+      }
+    }
+    global.__lastUpdate__ = parsed.updatedAt ?? undefined;
+  } catch {
+    // Sem cache persistido ainda.
+  }
+
+  global.__priceCacheLoaded__ = true;
+}
+
+async function persistCache(): Promise<void> {
+  await fs.mkdir(CACHE_DIR, { recursive: true });
+
+  const payload: PersistedCacheFile = {
+    version: 1,
+    updatedAt: global.__lastUpdate__ ?? null,
+    snapshots: Array.from(priceCache.values())
+  };
+
+  await fs.writeFile(CACHE_FILE, JSON.stringify(payload, null, 2), "utf-8");
+}
+
 async function getOrScrape(
   source: "prezunic" | "zonasul" | "extra",
   term: string,
   scraper: (term: string) => Promise<Offer[]>
 ): Promise<Offer[]> {
+  await ensurePersistentCacheLoaded();
   const normalizedTerm = normalizeItemName(term);
   const key = makeCacheKey(source, normalizedTerm);
   const cache = priceCache.get(key);
 
-  if (cache && isFresh(cache.fetchedAt)) {
+  if (cache) {
     return cache.offers;
   }
 
-  const offers = await scraper(normalizedTerm);
-  priceCache.set(key, {
-    source,
-    term: normalizedTerm,
-    offers,
-    fetchedAt: new Date().toISOString()
-  });
+  const inflight = inflightScrapes.get(key);
+  if (inflight) return inflight;
 
-  return offers;
-}
+  const scrapePromise = (async () => {
+    const offers = await scraper(normalizedTerm);
+    priceCache.set(key, {
+      source,
+      term: normalizedTerm,
+      offers,
+      fetchedAt: new Date().toISOString()
+    });
+    await persistCache();
+    return offers;
+  })();
 
-function isFresh(fetchedAt: string): boolean {
-  const elapsedMs = Date.now() - new Date(fetchedAt).getTime();
-  const oneDayMs = 24 * 60 * 60 * 1000;
-  return elapsedMs <= oneDayMs;
+  inflightScrapes.set(key, scrapePromise);
+  try {
+    return await scrapePromise;
+  } finally {
+    inflightScrapes.delete(key);
+  }
 }
 
 function decimalPlaces(value: number): number {
@@ -165,18 +222,19 @@ function summarizeItem(input: ShoppingItemInput, offers: Offer[]): ItemPriceSumm
       ...offer,
       normalizedPricePerUserUnit: offer.packagePrice / offer.packageQuantity
     }));
+  const realOffers = offersInReferenceUnit.filter((offer) => !offer.isFallback);
+  const baseOffers = realOffers.length > 0 ? realOffers : offersInReferenceUnit;
   const quantityRule = inferQuantityRule(referenceUnit, offersInReferenceUnit);
   const normalizedQuantity = applyQuantityRule(input.quantity, quantityRule);
 
-  const unitPrices = offersInReferenceUnit.map((offer) => offer.normalizedPricePerUserUnit);
+  const unitPrices = baseOffers.map((offer) => offer.normalizedPricePerUserUnit);
 
   const lowestUnitPrice = unitPrices.length ? Math.min(...unitPrices) : 0;
   const averageUnitPrice = unitPrices.length
     ? unitPrices.reduce((acc, value) => acc + value, 0) / unitPrices.length
     : 0;
 
-  const bestOffer =
-    offersInReferenceUnit.find((offer) => offer.normalizedPricePerUserUnit === lowestUnitPrice) ?? null;
+  const bestOffer = baseOffers.find((offer) => offer.normalizedPricePerUserUnit === lowestUnitPrice) ?? null;
 
   return {
     itemName: normalizeItemName(input.name),
@@ -188,6 +246,9 @@ function summarizeItem(input: ShoppingItemInput, offers: Offer[]): ItemPriceSumm
     lowestTotalPrice: lowestUnitPrice * normalizedQuantity,
     averageTotalPrice: averageUnitPrice * normalizedQuantity,
     bestSource: bestOffer?.source ?? null,
+    bestOfferUrl: bestOffer?.isFallback ? null : (bestOffer?.productUrl ?? null),
+    bestOfferTitle: bestOffer?.productTitle ?? null,
+    hasRealOffers: realOffers.length > 0,
     offers: offersInReferenceUnit
   };
 }
@@ -225,6 +286,7 @@ export async function calculateListPrices(
 }
 
 export async function refreshAllCachedPrices(): Promise<{ updated: number; estimatedSeconds: number }> {
+  await ensurePersistentCacheLoaded();
   const snapshots = Array.from(priceCache.values());
   const targets = snapshots.length;
 
@@ -244,6 +306,7 @@ export async function refreshAllCachedPrices(): Promise<{ updated: number; estim
   }
 
   global.__lastUpdate__ = new Date().toISOString();
+  await persistCache();
 
   return {
     updated: targets,
@@ -251,6 +314,7 @@ export async function refreshAllCachedPrices(): Promise<{ updated: number; estim
   };
 }
 
-export function getLastUpdate(): string | null {
+export async function getLastUpdate(): Promise<string | null> {
+  await ensurePersistentCacheLoaded();
   return global.__lastUpdate__ ?? null;
 }

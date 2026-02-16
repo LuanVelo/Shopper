@@ -21,3 +21,5 @@ yarn-error.log*
 
 # debug scrape outputs
 data/scrape-debug/
+data/market/
+data/price-cache/

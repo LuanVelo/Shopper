@@ -6,7 +6,7 @@ ensureMonthlyScheduler();
 
 export async function GET() {
   return NextResponse.json({
-    lastUpdate: getLastUpdate(),
+    lastUpdate: await getLastUpdate(),
     estimateSeconds: 0
   });
 }

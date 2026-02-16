@@ -1,169 +1,149 @@
 # Shopper v0
 
-Aplicação web para montar lista de compras de supermercado e comparar preços entre múltiplas fontes, exibindo:
+Aplicação web para montar lista de compras de supermercado com comparação entre:
+- Prezunic
+- Zona Sul
+- Extra
+
+O sistema calcula:
 - menor preço por item;
-- preço médio por item;
+- média simples por item;
 - menor total da lista;
-- total médio esperado da lista.
+- total médio esperado.
 
-Fontes atuais:
-- Prezunic (`https://www.prezunic.com.br`)
-- Zona Sul (`https://www.zonasul.com.br`)
-- Extra (`https://www.extramercado.com.br`)
+## Stack
+- `Next.js 15`, `React 18`, `TypeScript`
+- `Tailwind CSS` + base de componentes estilo `shadcn/ui`
+- Scraping com `axios` + `cheerio`
+- Agendamento com `node-cron`
 
-## Objetivo do projeto
-Ajudar o usuário a estimar rapidamente o custo de uma compra antes de finalizar no checkout dos mercados.
+## Arquitetura atual
+- Frontend em `app/page.tsx`.
+- Cálculo em `POST /api/calculate` via `lib/price-engine.ts`.
+- Scrapers por fonte em `lib/scrapers/*`.
+- Cache persistente de consultas em arquivo local:
+  - `data/price-cache/snapshots.json`
+- Atualização manual em `POST /api/update-prices`.
+- Rotina automática mensal no dia 5 às 03:00 (`America/Sao_Paulo`) via `lib/scheduler.ts`.
 
-O sistema tenta refletir a lógica real dos e-commerces (ex.: itens de açougue em `kg`, quantidades por passo permitido, preço por unidade de referência).
-
-## Stack de tecnologia
-- Frontend: `Next.js 15` + `React 18` + `TypeScript`
-- UI: `Tailwind CSS` + componentes base estilo `shadcn/ui`
-- Backend: API routes no próprio `Next.js` (`app/api/*`)
-- Scraping: `axios` + `cheerio`
-- Agendamento: `node-cron` (rotina mensal)
-- Tooling: `ESLint`, `TypeScript`, `PostCSS`, `Autoprefixer`
-
-## Arquitetura (visão geral)
-- Aplicação fullstack dentro de um único projeto Next.js.
-- A tela principal envia os itens para `/api/calculate`.
-- O motor de preços (`lib/price-engine.ts`) consulta scrapers por mercado.
-- Resultados são normalizados e agregados por item (menor + média simples).
-- Cache em memória evita scraping repetido imediato.
-- Endpoint manual (`/api/update-prices`) força atualização do cache.
-- Scheduler mensal roda no dia 5 para atualização automática.
+## Fluxo de dados (atual)
+1. Usuário informa CEP e itens.
+2. Para cada item e cada mercado:
+   - se já existe no cache interno, usa cache;
+   - se não existe, faz scrape e salva no cache.
+3. Calcula menor preço e média.
+4. Atualização mensal/manual reprocessa apenas os termos já catalogados no cache.
 
 ## Estrutura de pastas
-
 ```text
 app/
   api/
-    calculate/route.ts            # cálculo principal da lista
-    categories/route.ts           # categorias por mercado
-    debug-scrape/route.ts         # auditoria de scrape por termo (salva JSON)
-    update-prices/route.ts        # atualização manual dos preços em cache
-    zonasul/market-data/route.ts  # coleta Zona Sul via VTEX JSON (por categoria)
-  globals.css                     # estilos globais
-  layout.tsx                      # layout base Next.js
-  page.tsx                        # tela principal (input + resultados em tempo real)
+    calculate/route.ts
+    categories/route.ts
+    debug-scrape/route.ts
+    dev-status/route.ts
+    update-prices/route.ts
+    zonasul/
+      market-data/route.ts
+      ingest/route.ts
+      offers/route.ts
+  layout.tsx
+  page.tsx
 
-components/
-  ui/
-    button.tsx                    # botão base
-    card.tsx                      # card base
-    input.tsx                     # input base
+components/ui/
+  button.tsx
+  card.tsx
+  input.tsx
 
 lib/
-  categories.ts                   # categorias por fonte + CEP padrão
-  normalization.ts                # sinônimos e parsing de unidade/embalagem
-  price-engine.ts                 # motor de cálculo, regras de quantidade e cache
-  scheduler.ts                    # cron mensal (dia 5, 03:00)
-  utils.ts                        # utilitários gerais (ex.: formatação BRL)
+  categories.ts
+  normalization.ts
+  price-engine.ts
+  scheduler.ts
+  utils.ts
   scrapers/
-    common.ts                     # helpers comuns, fallback e parsing de preço
-    prezunic.ts                   # scraper Prezunic
-    zonasul.ts                    # scraper Zona Sul
-    extra.ts                      # scraper Extra
-    zonasul-market.ts             # integração VTEX JSON para Zona Sul
+    common.ts
+    prezunic.ts
+    zonasul.ts
+    extra.ts
+    zonasul-market.ts
+  market/
+    schema.ts
+  pipeline/
+    zonasul-ingest.ts
+  storage/
+    market-store.ts
 
 types/
-  index.ts                        # tipos de domínio (item, oferta, resposta, etc.)
-  node-cron.d.ts                  # declaração de tipo para node-cron
+  index.ts
+  node-cron.d.ts
+
+data/
+  price-cache/
+  scrape-debug/
+  market/
 ```
 
-## Regras de negócio implementadas
+## Regras de negócio (atuais)
 
-### 1) Unidade de referência por item
-A unidade usada no cálculo é inferida pelas ofertas coletadas.
-Exemplos:
-- carnes e cortes: normalmente `kg`;
-- bebidas: normalmente `l`;
-- itens unitários: `un`.
+### Unidade e quantidade
+- Unidade de referência inferida pelas ofertas (`un`, `kg`, `g`, `l`, `ml`).
+- Quantidade segue passo permitido inferido do conjunto de ofertas.
 
-### 2) Quantidade com passos permitidos
-A quantidade do usuário é ajustada para passos válidos encontrados nas embalagens/ofertas:
-- `un`: passos inteiros (`1`, `2`, `3`...)
-- peso/volume: passo fixo inferido (ex.: `0.5`, `1.0`, `1.5`)
+### Regra de compra por pacote
+- Se **não** existe preço explícito por medida no card (`R$/kg`, `R$/g`, `R$/L`, `R$/ml`), o item é tratado como `un`.
+- Exemplo: `Pão de Forma ... 450g` vira `R$/un` (pacote), não `R$/g`.
 
-### 3) Preço unitário e total
-Para cada item:
-- menor preço unitário;
-- média simples de preço unitário;
-- total mínimo (`menor_unit * quantidade`);
-- total médio (`media_unit * quantidade`).
+### Regra de açougue
+- Itens de açougue são tratados com heurísticas específicas para evitar distorções.
+- Match textual usa palavra completa (evita falso positivo por substring, ex.: `ancho` dentro de `kalanchoe`).
+- Se o termo é de açougue, aplica filtro de categoria para manter resultados de carne/peixaria.
 
-Para a lista:
-- soma dos totais mínimos;
-- soma dos totais médios.
+### Filtros semânticos
+- Termos ambíguos possuem filtros de relevância dedicados (ex.: `leite`).
 
-### 4) Heurísticas de açougue
-O scraper possui heurísticas para evitar distorções comuns em carnes:
-- prioriza leitura de preço explícito por unidade (ex.: `R$ 18,49/kg`);
-- força contexto de peso para cortes quando necessário;
-- possui fallback para casos de markup incompleto.
-
-## Endpoints disponíveis
+## Endpoints principais
 
 ### `POST /api/calculate`
 Calcula preços da lista.
 
-Payload:
+Exemplo:
 ```json
 {
   "cep": "22470-220",
   "items": [
-    { "name": "peito de frango", "quantity": 2 },
-    { "name": "leite", "quantity": 3 }
+    { "name": "leite", "quantity": 2 },
+    { "name": "ancho", "quantity": 1 }
   ]
 }
 ```
 
-### `GET /api/categories`
-Retorna categorias mapeadas por fonte.
+### `POST /api/update-prices`
+Atualiza os termos já existentes no cache interno.
 
 ### `GET /api/update-prices`
-Retorna status da última atualização manual.
-
-### `POST /api/update-prices`
-Força re-scraping dos itens em cache.
+Retorna data da última atualização.
 
 ### `GET /api/debug-scrape?term=<item>`
-Audita scraping por termo, retorna as ofertas por mercado e salva arquivo JSON em:
-- `data/scrape-debug/`
+Retorna ofertas por mercado e salva auditoria em `data/scrape-debug/`.
 
-Exemplo:
-- `/api/debug-scrape?term=peito%20de%20frango`
+### `GET /api/dev-status`
+Métricas para card de desenvolvimento:
+- número de itens no cache;
+- itens por categoria (heurística);
+- `%` de produtos com erro de preço.
 
-### `GET /api/zonasul/market-data`
-Integração recomendada para Zona Sul via API JSON da VTEX.
+## Tela (frontend)
+- Entrada de itens linha a linha (`nome + quantidade`).
+- Resultado atualizado em tempo real.
+- Link `Ver oferta` no item com menor preço quando disponível.
+- Card `Dev Status` após `Categorias por fonte`.
 
-Uso:
-- listar categorias: `/api/zonasul/market-data`
-- buscar produtos por categoria:
-  - `/api/zonasul/market-data?categoryId=<id>&page=1&pageSize=24`
-
-## Fluxo de execução
-1. Usuário informa CEP e itens na tela.
-2. Frontend envia para `/api/calculate`.
-3. `price-engine` busca (ou reaproveita cache) de cada mercado.
-4. Scrapers retornam ofertas normalizadas.
-5. Motor aplica regras de unidade/quantidade e calcula menor + média.
-6. Frontend atualiza resultados em tempo real.
-
-## Rodar localmente
-
-Pré-requisitos:
-- Node.js 18+ (recomendado 20+)
-- npm
-
-Comandos:
+## Execução local
 ```bash
 npm install
 npm run dev
 ```
-
-App:
-- `http://localhost:3000`
 
 Verificações:
 ```bash
@@ -171,53 +151,19 @@ npm run typecheck
 npm run build
 ```
 
-## Operação e limitações atuais
-- Cache é em memória do processo (reiniciar app limpa cache).
-- Scraping HTML pode quebrar se os sites alterarem markup.
-- Precisão por CEP ainda depende de evolução de sessão/cookies específicos por mercado.
-- O endpoint de auditoria facilita inspeção e ajuste rápido dos scrapers.
+## Observações
+- Scraping depende da estrutura dos sites e pode exigir manutenção frequente.
+- Cache local fica em `data/price-cache/` e não é versionado no Git.
 
-## Segurança e boas práticas
-- Respeitar termos de uso dos sites alvo.
-- Evitar frequência agressiva de scraping.
-- Em produção, preferir worker/queue e persistência de histórico.
+## Scripts
+- `npm run dev`
+- `npm run build`
+- `npm run start`
+- `npm run lint`
+- `npm run typecheck`
 
-## Roadmap sugerido
-1. Persistir histórico de preços em banco (SQLite/Postgres).
-2. Separar serviço de scraping do web app (worker dedicado).
-3. Criar camada de observabilidade (logs estruturados + alertas).
-4. Melhorar matching semântico de produto (sinônimos por categoria e marca).
-5. Expor tela de auditoria no frontend (sem depender de JSON manual).
-
-## Scripts npm
-- `npm run dev`: inicia ambiente de desenvolvimento
-- `npm run build`: build de produção
-- `npm run start`: sobe servidor de produção
-- `npm run lint`: lint do projeto
-- `npm run typecheck`: checagem de tipos TypeScript
-
-## Guia rápido para novos devs (5 minutos)
-
-### 1) Pré-requisitos
-- Node.js 18+ (recomendado 20+)
-- npm
-- Git
-
-### 2) Clonar e abrir o projeto
-```bash
-git clone https://github.com/LuanVelo/Shopper.git
-cd Shopper
-```
-
-### 3) Instalar dependências
-```bash
-npm install
-```
-
-### 4) Rodar localmente
-```bash
-npm run dev
-```
+---
+Esse projeto foi desenvolvido com OpenAI Codex.
 
 Abrir no navegador:
 - `http://localhost:3000`

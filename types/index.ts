@@ -16,6 +16,7 @@ export interface Offer {
   packagePrice: number;
   normalizedPricePerUserUnit: number;
   productUrl?: string;
+  isFallback?: boolean;
   collectedAt: string;
 }
 
@@ -32,6 +33,9 @@ export interface ItemPriceSummary {
   lowestTotalPrice: number;
   averageTotalPrice: number;
   bestSource: SourceName | null;
+  bestOfferUrl: string | null;
+  bestOfferTitle: string | null;
+  hasRealOffers: boolean;
   offers: Offer[];
 }
 

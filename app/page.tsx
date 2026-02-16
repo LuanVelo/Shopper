@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, RefreshCw, Plus, Trash2 } from "lucide-react";
+import { Loader2, RefreshCw, Plus, Trash2, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -16,10 +16,32 @@ type ItemDraft = {
   quantity: number;
 };
 
+type DevStatusResponse = {
+  itemsCount: number;
+  itemsByCategory: Array<{ category: string; count: number }>;
+  priceErrorPercent: number;
+  totals: {
+    termsCount: number;
+    snapshotsCount: number;
+    offersCount: number;
+  };
+  cacheUpdatedAt?: string | null;
+};
+
+const INITIAL_ITEM_ID = "item-1";
+let itemSequence = 2;
+
+function nextItemId(): string {
+  const id = `item-${itemSequence}`;
+  itemSequence += 1;
+  return id;
+}
+
 export default function HomePage() {
   const [cep, setCep] = useState(DEFAULT_CEP);
-  const [items, setItems] = useState<ItemDraft[]>([{ id: crypto.randomUUID(), name: "", quantity: 1 }]);
+  const [items, setItems] = useState<ItemDraft[]>([{ id: INITIAL_ITEM_ID, name: "", quantity: 1 }]);
   const [data, setData] = useState<CalculationResponse | null>(null);
+  const [devStatus, setDevStatus] = useState<DevStatusResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<string>("Rotina automática: todo dia 5 às 03:00");
@@ -37,6 +59,10 @@ export default function HomePage() {
   }, [data]);
 
   useEffect(() => {
+    void refreshDevStatus();
+  }, []);
+
+  useEffect(() => {
     if (!hasValidItems) {
       setData(null);
       return;
@@ -52,6 +78,7 @@ export default function HomePage() {
         });
         const json = (await response.json()) as CalculationResponse;
         setData(json);
+        void refreshDevStatus();
       } finally {
         setLoading(false);
       }
@@ -82,11 +109,21 @@ export default function HomePage() {
   }
 
   function addItem() {
-    setItems((current) => [...current, { id: crypto.randomUUID(), name: "", quantity: 1 }]);
+    setItems((current) => [...current, { id: nextItemId(), name: "", quantity: 1 }]);
   }
 
   function removeItem(id: string) {
     setItems((current) => (current.length === 1 ? current : current.filter((item) => item.id !== id)));
+  }
+
+  async function refreshDevStatus() {
+    try {
+      const response = await fetch("/api/dev-status");
+      const json = (await response.json()) as DevStatusResponse;
+      setDevStatus(json);
+    } catch {
+      setDevStatus(null);
+    }
   }
 
   async function triggerManualUpdate() {
@@ -98,6 +135,7 @@ export default function HomePage() {
       setUpdateInfo(
         `Atualizado em ${new Date(json.updatedAt).toLocaleString("pt-BR")}. Itens recarregados: ${json.updated}. Tempo: ${json.elapsedSeconds}s.`
       );
+      void refreshDevStatus();
     } catch {
       setUpdateInfo("Falha ao atualizar manualmente. Tente novamente.");
     } finally {
@@ -202,11 +240,36 @@ export default function HomePage() {
                   <tbody>
                     {data.items.map((item) => (
                       <tr key={`${item.itemName}-${item.unit}`} className="border-t">
-                        <td className="p-3 font-medium">{item.itemName}</td>
-                        <td className="p-3">{item.quantity} {item.unit}</td>
+                        <td className="p-3 font-medium">
+                          <div className="flex items-center gap-2">
+                            <span>{item.itemName}</span>
+                            {item.bestOfferUrl ? (
+                              <a
+                                href={item.bestOfferUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 rounded border px-2 py-1 text-xs font-medium hover:bg-muted"
+                                title={item.bestOfferTitle ?? `Abrir oferta de ${item.itemName}`}
+                              >
+                                Ver oferta <ExternalLink className="h-3 w-3" />
+                              </a>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">
+                                {item.hasRealOffers ? "Sem link" : "Sem oferta real"}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="p-3">
+                          {item.quantity} {item.unit}
+                        </td>
                         <td className="p-3">{item.bestSource ?? "-"}</td>
-                        <td className="p-3">{brl(item.lowestUnitPrice)} / {item.unit}</td>
-                        <td className="p-3">{brl(item.averageUnitPrice)} / {item.unit}</td>
+                        <td className="p-3">
+                          {brl(item.lowestUnitPrice)} / {item.unit}
+                        </td>
+                        <td className="p-3">
+                          {brl(item.averageUnitPrice)} / {item.unit}
+                        </td>
                         <td className="p-3">{brl(item.lowestTotalPrice)}</td>
                         <td className="p-3">{brl(item.averageTotalPrice)}</td>
                       </tr>
@@ -236,6 +299,41 @@ export default function HomePage() {
               <p className="text-xs text-muted-foreground">{categories.join(" · ")}</p>
             </div>
           ))}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Dev Status</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {!devStatus ? (
+            <p className="text-sm text-muted-foreground">Carregando status...</p>
+          ) : (
+            <>
+              <div className="grid gap-3 md:grid-cols-3">
+                <Summary label="Número de itens" value={String(devStatus.itemsCount)} />
+                <Summary label="Termos catalogados" value={String(devStatus.totals.termsCount)} />
+                <Summary label="% com erro de preço" value={`${devStatus.priceErrorPercent.toFixed(2)}%`} />
+              </div>
+
+              <div className="rounded-lg border bg-background p-4">
+                <p className="text-sm font-medium">Itens em cada categoria</p>
+                {devStatus.itemsByCategory.length === 0 ? (
+                  <p className="mt-2 text-xs text-muted-foreground">Sem dados no cache ainda.</p>
+                ) : (
+                  <div className="mt-2 grid gap-2 md:grid-cols-2">
+                    {devStatus.itemsByCategory.map((entry) => (
+                      <div key={entry.category} className="flex items-center justify-between text-sm">
+                        <span>{entry.category}</span>
+                        <span className="font-medium">{entry.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
     </main>

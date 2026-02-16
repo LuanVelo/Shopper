@@ -1,8 +1,21 @@
 import * as cheerio from "cheerio";
 import { Offer } from "@/types";
-import { buildOffersFromRaw, fallbackOffers, fetchHtml, parsePriceText, RawProduct } from "@/lib/scrapers/common";
+import {
+  buildOffersFromRaw,
+  fetchVtexProductsByTerm,
+  fetchHtml,
+  parsePriceText,
+  RawProduct,
+  toAbsoluteProductUrl
+} from "@/lib/scrapers/common";
 
 export async function scrapePrezunic(term: string): Promise<Offer[]> {
+  const baseUrl = "https://www.prezunic.com.br";
+  const apiProducts = await fetchVtexProductsByTerm(baseUrl, term, 24, 3);
+  if (apiProducts.length > 0) {
+    return buildOffersFromRaw("prezunic", term, apiProducts);
+  }
+
   const encodedTerm = encodeURIComponent(term);
   const searchUrls = [
     `https://www.prezunic.com.br/busca/?ft=${encodedTerm}`,
@@ -29,17 +42,26 @@ export async function scrapePrezunic(term: string): Promise<Offer[]> {
         if (!title || !priceText) return;
         const parsedPrice = parsePriceText(priceText);
         if (!parsedPrice) return;
+        const productHref =
+          $(el).find("a.vtex-product-summary-2-x-clearLink").attr("href") ||
+          $(el).find("a.product-item__name").attr("href") ||
+          $(el).find("a").first().attr("href");
 
-        products.push({ title, price: parsedPrice, rawText: $(el).text().trim() });
+        products.push({
+          title,
+          price: parsedPrice,
+          rawText: $(el).text().trim(),
+          url: toAbsoluteProductUrl(baseUrl, productHref)
+        });
       });
 
       if (products.length > 0) {
-        return buildOffersFromRaw("prezunic", term, products).slice(0, 6);
+        return buildOffersFromRaw("prezunic", term, products);
       }
     } catch {
       // Try the next URL.
     }
   }
 
-  return fallbackOffers("prezunic", term);
+  return [];
 }

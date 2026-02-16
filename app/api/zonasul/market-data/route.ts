@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchZonaSulFlatCategories, fetchZonaSulProductsByCategory } from "@/lib/scrapers/zonasul-market";
 
+export const dynamic = "force-dynamic";
+
 function parsePositiveInt(value: string | null, fallback: number): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;

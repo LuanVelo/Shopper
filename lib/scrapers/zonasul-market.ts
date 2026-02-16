@@ -21,13 +21,18 @@ export interface ZonaSulCategoryFlat {
 }
 
 export interface ZonaSulMarketItem {
+  productId: string | null;
+  brand: string | null;
   categoryPath: string | null;
   itemName: string;
+  packageQuantity: number | null;
   priceFrom: number | null;
   priceBy: number | null;
   pricePerUnit: number | null;
   unit: string;
   productUrl: string | null;
+  inStock: boolean | null;
+  rawPayload: unknown;
 }
 
 export interface ZonaSulProductsByCategoryResult {
@@ -116,6 +121,8 @@ function resolvePackageInfo(product: any): { quantity: number; unit: string } {
 }
 
 function mapProductToMarketItem(product: any): ZonaSulMarketItem {
+  const firstItem = Array.isArray(product?.items) ? product.items[0] : null;
+  const firstSeller = Array.isArray(firstItem?.sellers) ? firstItem.sellers[0] : null;
   const { priceFrom, priceBy } = parsePriceContext(product);
   const packageInfo = resolvePackageInfo(product);
   const pricePerUnit =
@@ -128,13 +135,21 @@ function mapProductToMarketItem(product: any): ZonaSulMarketItem {
   const productUrl = makeAbsoluteUrl(productPath);
 
   return {
+    productId: product?.productId ? String(product.productId) : null,
+    brand: product?.brand ? String(product.brand) : null,
     categoryPath,
     itemName: String(product?.productName ?? "").trim(),
+    packageQuantity: packageInfo.quantity,
     priceFrom,
     priceBy,
     pricePerUnit,
     unit: packageInfo.unit,
-    productUrl
+    productUrl,
+    inStock:
+      typeof firstSeller?.commertialOffer?.IsAvailable === "boolean"
+        ? firstSeller.commertialOffer.IsAvailable
+        : null,
+    rawPayload: product
   };
 }
 
