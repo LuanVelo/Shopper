@@ -1,0 +1,23 @@
+# dependencies
+node_modules/
+
+# next.js
+.next/
+out/
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# env
+.env*
+
+# typescript
+*.tsbuildinfo
+
+# macOS
+.DS_Store
+
+# debug scrape outputs
+data/scrape-debug/
