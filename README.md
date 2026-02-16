@@ -241,3 +241,6 @@ git checkout -b feature/minha-alteracao
 - Endpoints `app/api/*` funcionando.
 - Regras de unidade/quantidade não regrediram.
 - Sem arquivos de build no commit (`.next`, logs, artefatos temporários).
+
+## Aviso
+Este projeto foi desenvolvido com OpenAI Codex.
