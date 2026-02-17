@@ -41,6 +41,20 @@ export const SOURCE_CATEGORIES: Record<SourceName, string[]> = {
     "Bebê",
     "Pet Shop",
     "Utilidades Domésticas"
+  ],
+  supermarketdelivery: [
+    "Hortifruti",
+    "Carnes e Peixes",
+    "Mercearia",
+    "Laticínios e Frios",
+    "Padaria e Biscoitos",
+    "Bebidas",
+    "Congelados",
+    "Limpeza",
+    "Higiene e Beleza",
+    "Bebê",
+    "Pet Shop",
+    "Utilidades e Bazar"
   ]
 };
 

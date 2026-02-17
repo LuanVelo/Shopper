@@ -1,6 +1,7 @@
 import { normalizeItemName } from "@/lib/normalization";
 import { scrapeExtra } from "@/lib/scrapers/extra";
 import { scrapePrezunic } from "@/lib/scrapers/prezunic";
+import { scrapeSupermarketDelivery } from "@/lib/scrapers/supermarketdelivery";
 import { scrapeZonaSul } from "@/lib/scrapers/zonasul";
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -46,13 +47,14 @@ function makeCacheKey(source: string, term: string): string {
 }
 
 async function fetchOffers(term: string): Promise<Offer[]> {
-  const [prezunic, zonasul, extra] = await Promise.all([
+  const [prezunic, zonasul, extra, supermarketdelivery] = await Promise.all([
     getOrScrape("prezunic", term, scrapePrezunic),
     getOrScrape("zonasul", term, scrapeZonaSul),
-    getOrScrape("extra", term, scrapeExtra)
+    getOrScrape("extra", term, scrapeExtra),
+    getOrScrape("supermarketdelivery", term, scrapeSupermarketDelivery)
   ]);
 
-  return [...prezunic, ...zonasul, ...extra];
+  return [...prezunic, ...zonasul, ...extra, ...supermarketdelivery];
 }
 
 async function ensurePersistentCacheLoaded(): Promise<void> {
@@ -88,7 +90,7 @@ async function persistCache(): Promise<void> {
 }
 
 async function getOrScrape(
-  source: "prezunic" | "zonasul" | "extra",
+  source: "prezunic" | "zonasul" | "extra" | "supermarketdelivery",
   term: string,
   scraper: (term: string) => Promise<Offer[]>
 ): Promise<Offer[]> {
@@ -299,6 +301,9 @@ export async function refreshAllCachedPrices(): Promise<{ updated: number; estim
     }
     if (snapshot.source === "extra") {
       snapshot.offers = await scrapeExtra(snapshot.term);
+    }
+    if (snapshot.source === "supermarketdelivery") {
+      snapshot.offers = await scrapeSupermarketDelivery(snapshot.term);
     }
     snapshot.fetchedAt = new Date().toISOString();
     const key = makeCacheKey(snapshot.source, snapshot.term);

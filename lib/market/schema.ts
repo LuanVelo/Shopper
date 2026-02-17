@@ -1,4 +1,4 @@
-export type MarketName = "zonasul" | "prezunic" | "extra";
+export type MarketName = "zonasul" | "prezunic" | "extra" | "supermarketdelivery";
 
 export interface NormalizedMarketOffer {
   market: MarketName;
@@ -31,4 +31,3 @@ export interface MarketSnapshotFile {
   offersCount: number;
   offers: NormalizedMarketOffer[];
 }
-

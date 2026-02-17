@@ -55,7 +55,8 @@ export function makeSourceSearchUrl(source: SourceName, term: string): string {
   const encoded = encodeURIComponent(term);
   if (source === "prezunic") return `https://www.prezunic.com.br/busca/?ft=${encoded}`;
   if (source === "zonasul") return `https://www.zonasul.com.br/busca?ft=${encoded}`;
-  return `https://www.extramercado.com.br/busca?ft=${encoded}`;
+  if (source === "extra") return `https://www.extramercado.com.br/busca?ft=${encoded}`;
+  return `https://www.supermarketdelivery.com.br/search?term=${encoded}`;
 }
 
 function parsePriceFromVtexProduct(product: any): number | null {

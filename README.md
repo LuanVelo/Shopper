@@ -4,6 +4,7 @@ Aplicação web para montar lista de compras de supermercado com comparação en
 - Prezunic
 - Zona Sul
 - Extra
+- Supermarket Delivery
 
 O sistema calcula:
 - menor preço por item;
@@ -26,9 +27,9 @@ O sistema calcula:
 - Atualização manual em `POST /api/update-prices`.
 - Rotina automática mensal no dia 5 às 03:00 (`America/Sao_Paulo`) via `lib/scheduler.ts`.
 
-## Fluxo de dados (atual)
+## Fluxo de dados
 1. Usuário informa CEP e itens.
-2. Para cada item e cada mercado:
+2. Para cada item e mercado:
    - se já existe no cache interno, usa cache;
    - se não existe, faz scrape e salva no cache.
 3. Calcula menor preço e média.
@@ -66,6 +67,7 @@ lib/
     prezunic.ts
     zonasul.ts
     extra.ts
+    supermarketdelivery.ts
     zonasul-market.ts
   market/
     schema.ts
@@ -84,7 +86,7 @@ data/
   market/
 ```
 
-## Regras de negócio (atuais)
+## Regras de negócio
 
 ### Unidade e quantidade
 - Unidade de referência inferida pelas ofertas (`un`, `kg`, `g`, `l`, `ml`).
@@ -95,12 +97,19 @@ data/
 - Exemplo: `Pão de Forma ... 450g` vira `R$/un` (pacote), não `R$/g`.
 
 ### Regra de açougue
-- Itens de açougue são tratados com heurísticas específicas para evitar distorções.
-- Match textual usa palavra completa (evita falso positivo por substring, ex.: `ancho` dentro de `kalanchoe`).
+- Itens de açougue usam heurísticas para evitar distorções.
+- Match textual usa palavra completa (evita falso positivo de substring, ex.: `ancho` dentro de `kalanchoe`).
 - Se o termo é de açougue, aplica filtro de categoria para manter resultados de carne/peixaria.
 
 ### Filtros semânticos
 - Termos ambíguos possuem filtros de relevância dedicados (ex.: `leite`).
+
+## Supermarket Delivery
+- Integração via GraphQL (`nextgentheadless.instaleap.io/api/v3`).
+- Usa `searchProducts` com `clientId` e `storeReference`.
+- `storeReference` padrão: `2`.
+- Pode ser configurado por ambiente:
+  - `SUPERMARKETDELIVERY_STORE_REFERENCE=2`
 
 ## Endpoints principais
 
@@ -134,12 +143,10 @@ Métricas para card de desenvolvimento:
 - `%` de produtos com erro de preço.
 
 ## Tela (frontend)
-- Layout de checkout em duas colunas:
-  - Esquerda: entrada de itens, resultado em tempo real, `Categorias por fonte` e `Dev Status`.
-  - Direita: card `Resumo do checkout` com itens adicionados e faixa de menor/maior total.
 - Entrada de itens linha a linha (`nome + quantidade`).
 - Resultado atualizado em tempo real.
 - Link `Ver oferta` no item com menor preço quando disponível.
+- Blocos auxiliares: `Categorias por fonte` e `Dev Status`.
 
 ## Execução local
 ```bash
@@ -147,15 +154,14 @@ npm install
 npm run dev
 ```
 
+Abrir no navegador:
+- `http://localhost:3000`
+
 Verificações:
 ```bash
 npm run typecheck
 npm run build
 ```
-
-## Observações
-- Scraping depende da estrutura dos sites e pode exigir manutenção frequente.
-- Cache local fica em `data/price-cache/` e não é versionado no Git.
 
 ## Scripts
 - `npm run dev`
@@ -164,31 +170,9 @@ npm run build
 - `npm run lint`
 - `npm run typecheck`
 
+## Observações
+- Scraping depende da estrutura dos sites e pode exigir manutenção frequente.
+- Cache local fica em `data/price-cache/` e não é versionado no Git.
+
 ---
 Esse projeto foi desenvolvido com OpenAI Codex.
-
-Abrir no navegador:
-- `http://localhost:3000`
-
-### 5) Validar antes de subir código
-```bash
-npm run typecheck
-npm run build
-```
-
-### 6) Fluxo de trabalho recomendado
-- Criar branch de feature:
-```bash
-git checkout -b feature/minha-alteracao
-```
-- Commits pequenos e objetivos.
-- Abrir PR para `main` com descrição do que mudou e como validar.
-
-### 7) Checklist de PR
-- A tela principal (`/`) continua calculando em tempo real.
-- Endpoints `app/api/*` funcionando.
-- Regras de unidade/quantidade não regrediram.
-- Sem arquivos de build no commit (`.next`, logs, artefatos temporários).
-
-## Aviso
-Este projeto foi desenvolvido com OpenAI Codex.

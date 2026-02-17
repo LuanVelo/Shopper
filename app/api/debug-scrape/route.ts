@@ -3,6 +3,7 @@ import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { scrapeExtra } from "@/lib/scrapers/extra";
 import { scrapePrezunic } from "@/lib/scrapers/prezunic";
+import { scrapeSupermarketDelivery } from "@/lib/scrapers/supermarketdelivery";
 import { scrapeZonaSul } from "@/lib/scrapers/zonasul";
 import { normalizeItemName } from "@/lib/normalization";
 
@@ -25,10 +26,11 @@ export async function GET(request: NextRequest) {
     }
 
     const normalizedTerm = normalizeItemName(term);
-    const [prezunic, zonasul, extra] = await Promise.all([
+    const [prezunic, zonasul, extra, supermarketdelivery] = await Promise.all([
       scrapePrezunic(normalizedTerm),
       scrapeZonaSul(normalizedTerm),
-      scrapeExtra(normalizedTerm)
+      scrapeExtra(normalizedTerm),
+      scrapeSupermarketDelivery(normalizedTerm)
     ]);
 
     const payload = {
@@ -38,7 +40,8 @@ export async function GET(request: NextRequest) {
       markets: {
         prezunic,
         zonasul,
-        extra
+        extra,
+        supermarketdelivery
       }
     };
 

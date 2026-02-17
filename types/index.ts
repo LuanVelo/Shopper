@@ -1,4 +1,4 @@
-export type SourceName = "prezunic" | "zonasul" | "extra";
+export type SourceName = "prezunic" | "zonasul" | "extra" | "supermarketdelivery";
 
 export type Unit = "un" | "g" | "kg" | "ml" | "l";
 
