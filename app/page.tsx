@@ -57,6 +57,37 @@ export default function HomePage() {
     }
     return map;
   }, [data]);
+  const checkoutItems = useMemo(() => {
+    const priceByName = new Map<string, (CalculationResponse["items"][number] & { highestTotalPrice: number })>();
+    for (const item of data?.items ?? []) {
+      const highestUnitPriceFromOffers = item.offers.reduce((maxPrice, offer) => {
+        return Math.max(maxPrice, offer.normalizedPricePerUserUnit);
+      }, 0);
+      const highestUnitPrice = highestUnitPriceFromOffers > 0 ? highestUnitPriceFromOffers : item.averageUnitPrice;
+      priceByName.set(normalizeItemName(item.itemName), {
+        ...item,
+        highestTotalPrice: highestUnitPrice * item.quantity
+      });
+    }
+
+    return items
+      .filter((item) => item.name.trim() && item.quantity > 0)
+      .map((item) => {
+        const normalizedName = normalizeItemName(item.name);
+        const pricedItem = priceByName.get(normalizedName);
+        return {
+          id: item.id,
+          name: item.name.trim(),
+          quantity: item.quantity,
+          unit: pricedItem?.unit ?? null,
+          lowestTotalPrice: pricedItem?.lowestTotalPrice ?? null,
+          highestTotalPrice: pricedItem?.highestTotalPrice ?? null
+        };
+      });
+  }, [data, items]);
+  const highestTotalListPrice = useMemo(() => {
+    return checkoutItems.reduce((sum, item) => sum + (item.highestTotalPrice ?? 0), 0);
+  }, [checkoutItems]);
 
   useEffect(() => {
     void refreshDevStatus();
@@ -145,197 +176,254 @@ export default function HomePage() {
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 px-4 py-8 md:px-8">
-      <Card>
-        <CardHeader>
-          <CardTitle>Shopper v0 · Lista Inteligente de Supermercado</CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Fontes: Prezunic, Zona Sul e Extra. Exibindo menor preço e média simples por item e para a lista.
-          </p>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-2 md:max-w-xs">
-            <label className="text-sm font-medium">CEP da pesquisa</label>
-            <Input value={cep} onChange={(event) => setCep(event.target.value)} placeholder="22470-220" />
-          </div>
+      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.7fr)_360px]">
+        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Shopper v0 · Lista Inteligente de Supermercado</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Fontes: Prezunic, Zona Sul e Extra. Exibindo menor preço e média simples por item e para a lista.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-2 md:max-w-xs">
+                <label className="text-sm font-medium">CEP da pesquisa</label>
+                <Input value={cep} onChange={(event) => setCep(event.target.value)} placeholder="22470-220" />
+              </div>
 
-          <div className="space-y-3">
-            {items.map((item) => {
-              const rule = getRuleByName(item.name);
-              return (
-                <div key={item.id} className="grid gap-2 md:grid-cols-[1fr_200px_52px]">
-                  <Input
-                    placeholder="Ex.: arroz, leite, banana"
-                    value={item.name}
-                    onChange={(event) => updateItem(item.id, { name: event.target.value })}
-                  />
-                  <Input
-                    type="number"
-                    min={rule?.min ?? 0.01}
-                    step={rule?.step ?? 0.01}
-                    placeholder="Quantidade"
-                    value={item.quantity}
-                    onChange={(event) => updateItem(item.id, { quantity: Number(event.target.value) || 0 })}
-                    onBlur={() => {
-                      if (!rule) return;
-                      updateItem(item.id, { quantity: snapQuantity(item.quantity, rule) });
-                    }}
-                  />
-                  <Button variant="outline" onClick={() => removeItem(item.id)} aria-label="remover item">
-                    <Trash2 className="h-4 w-4" />
+              <div className="space-y-3">
+                {items.map((item) => {
+                  const rule = getRuleByName(item.name);
+                  return (
+                    <div key={item.id} className="grid gap-2 md:grid-cols-[1fr_200px_52px]">
+                      <Input
+                        placeholder="Ex.: arroz, leite, banana"
+                        value={item.name}
+                        onChange={(event) => updateItem(item.id, { name: event.target.value })}
+                      />
+                      <Input
+                        type="number"
+                        min={rule?.min ?? 0.01}
+                        step={rule?.step ?? 0.01}
+                        placeholder="Quantidade"
+                        value={item.quantity}
+                        onChange={(event) => updateItem(item.id, { quantity: Number(event.target.value) || 0 })}
+                        onBlur={() => {
+                          if (!rule) return;
+                          updateItem(item.id, { quantity: snapQuantity(item.quantity, rule) });
+                        }}
+                      />
+                      <Button variant="outline" onClick={() => removeItem(item.id)} aria-label="remover item">
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  );
+                })}
+
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" onClick={addItem}>
+                    <Plus className="mr-2 h-4 w-4" /> Adicionar item
+                  </Button>
+                  <Button variant="outline" onClick={triggerManualUpdate} disabled={updating}>
+                    {updating ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="mr-2 h-4 w-4" />
+                    )}
+                    Atualizar preços manualmente
                   </Button>
                 </div>
-              );
-            })}
-
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" onClick={addItem}>
-                <Plus className="mr-2 h-4 w-4" /> Adicionar item
-              </Button>
-              <Button variant="outline" onClick={triggerManualUpdate} disabled={updating}>
-                {updating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-                Atualizar preços manualmente
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">{updateInfo}</p>
-            <p className="text-xs text-muted-foreground">
-              A unidade é definida automaticamente pelo padrão encontrado nas ofertas dos mercados (ex.: carne em kg,
-              leite em L). Informe a quantidade nessa mesma unidade.
-            </p>
-            <p className="text-xs text-muted-foreground">
-              A quantidade segue passos permitidos por item (ex.: 1 em 1, 500g em 500g), conforme as embalagens
-              encontradas nos sites.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Resultado em tempo real</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {loading && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Recalculando...
-            </div>
-          )}
-
-          {!loading && !data && <p className="text-sm text-muted-foreground">Adicione itens para calcular.</p>}
-
-          {!loading && data && (
-            <div className="space-y-4">
-              <div className="overflow-auto rounded-md border">
-                <table className="w-full min-w-[780px] text-sm">
-                  <thead className="bg-muted/70 text-left">
-                    <tr>
-                      <th className="p-3">Item</th>
-                      <th className="p-3">Qtd</th>
-                      <th className="p-3">Melhor fonte</th>
-                      <th className="p-3">Menor preço unitário</th>
-                      <th className="p-3">Preço médio unitário</th>
-                      <th className="p-3">Total menor</th>
-                      <th className="p-3">Total médio</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.items.map((item) => (
-                      <tr key={`${item.itemName}-${item.unit}`} className="border-t">
-                        <td className="p-3 font-medium">
-                          <div className="flex items-center gap-2">
-                            <span>{item.itemName}</span>
-                            {item.bestOfferUrl ? (
-                              <a
-                                href={item.bestOfferUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 rounded border px-2 py-1 text-xs font-medium hover:bg-muted"
-                                title={item.bestOfferTitle ?? `Abrir oferta de ${item.itemName}`}
-                              >
-                                Ver oferta <ExternalLink className="h-3 w-3" />
-                              </a>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">
-                                {item.hasRealOffers ? "Sem link" : "Sem oferta real"}
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="p-3">
-                          {item.quantity} {item.unit}
-                        </td>
-                        <td className="p-3">{item.bestSource ?? "-"}</td>
-                        <td className="p-3">
-                          {brl(item.lowestUnitPrice)} / {item.unit}
-                        </td>
-                        <td className="p-3">
-                          {brl(item.averageUnitPrice)} / {item.unit}
-                        </td>
-                        <td className="p-3">{brl(item.lowestTotalPrice)}</td>
-                        <td className="p-3">{brl(item.averageTotalPrice)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <p className="text-xs text-muted-foreground">{updateInfo}</p>
+                <p className="text-xs text-muted-foreground">
+                  A unidade é definida automaticamente pelo padrão encontrado nas ofertas dos mercados (ex.: carne em
+                  kg, leite em L). Informe a quantidade nessa mesma unidade.
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  A quantidade segue passos permitidos por item (ex.: 1 em 1, 500g em 500g), conforme as embalagens
+                  encontradas nos sites.
+                </p>
               </div>
+            </CardContent>
+          </Card>
 
-              <div className="grid gap-3 md:grid-cols-3">
-                <Summary label="Quantidade de itens" value={String(data.summary.itemsCount)} />
-                <Summary label="Menor total da lista" value={brl(data.summary.lowestTotalListPrice)} />
-                <Summary label="Total médio esperado" value={brl(data.summary.averageTotalListPrice)} />
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>Resultado em tempo real</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {loading && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Recalculando...
+                </div>
+              )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Categorias por fonte</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-4 md:grid-cols-3">
-          {Object.entries(SOURCE_CATEGORIES).map(([source, categories]) => (
-            <div key={source} className="rounded-lg border bg-background p-3">
-              <h4 className="mb-2 text-sm font-semibold capitalize">{source}</h4>
-              <p className="text-xs text-muted-foreground">{categories.join(" · ")}</p>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
+              {!loading && !data && <p className="text-sm text-muted-foreground">Adicione itens para calcular.</p>}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Dev Status</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {!devStatus ? (
-            <p className="text-sm text-muted-foreground">Carregando status...</p>
-          ) : (
-            <>
-              <div className="grid gap-3 md:grid-cols-3">
-                <Summary label="Número de itens" value={String(devStatus.itemsCount)} />
-                <Summary label="Termos catalogados" value={String(devStatus.totals.termsCount)} />
-                <Summary label="% com erro de preço" value={`${devStatus.priceErrorPercent.toFixed(2)}%`} />
-              </div>
-
-              <div className="rounded-lg border bg-background p-4">
-                <p className="text-sm font-medium">Itens em cada categoria</p>
-                {devStatus.itemsByCategory.length === 0 ? (
-                  <p className="mt-2 text-xs text-muted-foreground">Sem dados no cache ainda.</p>
-                ) : (
-                  <div className="mt-2 grid gap-2 md:grid-cols-2">
-                    {devStatus.itemsByCategory.map((entry) => (
-                      <div key={entry.category} className="flex items-center justify-between text-sm">
-                        <span>{entry.category}</span>
-                        <span className="font-medium">{entry.count}</span>
-                      </div>
-                    ))}
+              {!loading && data && (
+                <div className="space-y-4">
+                  <div className="overflow-auto rounded-md border">
+                    <table className="w-full min-w-[780px] text-sm">
+                      <thead className="bg-muted/70 text-left">
+                        <tr>
+                          <th className="p-3">Item</th>
+                          <th className="p-3">Qtd</th>
+                          <th className="p-3">Melhor fonte</th>
+                          <th className="p-3">Menor preço unitário</th>
+                          <th className="p-3">Preço médio unitário</th>
+                          <th className="p-3">Total menor</th>
+                          <th className="p-3">Total médio</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.items.map((item) => (
+                          <tr key={`${item.itemName}-${item.unit}`} className="border-t">
+                            <td className="p-3 font-medium">
+                              <div className="flex items-center gap-2">
+                                <span>{item.itemName}</span>
+                                {item.bestOfferUrl ? (
+                                  <a
+                                    href={item.bestOfferUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 rounded border px-2 py-1 text-xs font-medium hover:bg-muted"
+                                    title={item.bestOfferTitle ?? `Abrir oferta de ${item.itemName}`}
+                                  >
+                                    Ver oferta <ExternalLink className="h-3 w-3" />
+                                  </a>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground">
+                                    {item.hasRealOffers ? "Sem link" : "Sem oferta real"}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="p-3">
+                              {item.quantity} {item.unit}
+                            </td>
+                            <td className="p-3">{item.bestSource ?? "-"}</td>
+                            <td className="p-3">
+                              {brl(item.lowestUnitPrice)} / {item.unit}
+                            </td>
+                            <td className="p-3">
+                              {brl(item.averageUnitPrice)} / {item.unit}
+                            </td>
+                            <td className="p-3">{brl(item.lowestTotalPrice)}</td>
+                            <td className="p-3">{brl(item.averageTotalPrice)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
-                )}
+
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <Summary label="Quantidade de itens" value={String(data.summary.itemsCount)} />
+                    <Summary label="Menor total da lista" value={brl(data.summary.lowestTotalListPrice)} />
+                    <Summary label="Total médio esperado" value={brl(data.summary.averageTotalListPrice)} />
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Categorias por fonte</CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-4 md:grid-cols-3">
+              {Object.entries(SOURCE_CATEGORIES).map(([source, categories]) => (
+                <div key={source} className="rounded-lg border bg-background p-3">
+                  <h4 className="mb-2 text-sm font-semibold capitalize">{source}</h4>
+                  <p className="text-xs text-muted-foreground">{categories.join(" · ")}</p>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Dev Status</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {!devStatus ? (
+                <p className="text-sm text-muted-foreground">Carregando status...</p>
+              ) : (
+                <>
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <Summary label="Número de itens" value={String(devStatus.itemsCount)} />
+                    <Summary label="Termos catalogados" value={String(devStatus.totals.termsCount)} />
+                    <Summary label="% com erro de preço" value={`${devStatus.priceErrorPercent.toFixed(2)}%`} />
+                  </div>
+
+                  <div className="rounded-lg border bg-background p-4">
+                    <p className="text-sm font-medium">Itens em cada categoria</p>
+                    {devStatus.itemsByCategory.length === 0 ? (
+                      <p className="mt-2 text-xs text-muted-foreground">Sem dados no cache ainda.</p>
+                    ) : (
+                      <div className="mt-2 grid gap-2 md:grid-cols-2">
+                        {devStatus.itemsByCategory.map((entry) => (
+                          <div key={entry.category} className="flex items-center justify-between text-sm">
+                            <span>{entry.category}</span>
+                            <span className="font-medium">{entry.count}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        <Card className="xl:sticky xl:top-8">
+          <CardHeader>
+            <CardTitle>Resumo do checkout</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {checkoutItems.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Adicione itens para montar seu checkout.</p>
+            ) : (
+              <div className="space-y-3">
+                {checkoutItems.map((item) => (
+                  <div key={item.id} className="rounded-lg border bg-background p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium">{item.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {item.quantity} {item.unit ?? "un"}
+                        </p>
+                      </div>
+                      {item.lowestTotalPrice === null ? (
+                        <p className="text-xs text-muted-foreground">Aguardando preço</p>
+                      ) : (
+                        <div className="text-right">
+                          <p className="text-xs text-muted-foreground">de {brl(item.lowestTotalPrice)}</p>
+                          <p className="text-sm font-semibold">até {brl(item.highestTotalPrice ?? item.lowestTotalPrice)}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
+            )}
+
+            <div className="space-y-2 rounded-lg border bg-background p-4">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Itens no checkout</span>
+                <span className="font-medium">{checkoutItems.length}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Menor total</span>
+                <span className="font-semibold">{brl(data?.summary.lowestTotalListPrice ?? 0)}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Maior total</span>
+                <span className="font-semibold">{brl(highestTotalListPrice)}</span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </main>
   );
 }
