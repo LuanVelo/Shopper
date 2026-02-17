@@ -371,19 +371,29 @@ export default function HomePage() {
             {checkoutItems.length === 0 ? (
               <p className="text-sm text-muted-foreground">Adicione itens para montar seu checkout.</p>
             ) : (
-              <div className="space-y-3">
-                {checkoutItems.map((item) => (
-                  <div key={item.id} className="rounded-lg border bg-background p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-medium">{item.name}</p>
-                      {item.lowestTotalPrice === null ? (
-                        <p className="text-xs text-muted-foreground">Aguardando preço</p>
-                      ) : (
-                        <p className="text-sm font-semibold">{brl(item.lowestTotalPrice)}</p>
-                      )}
+              <div className="space-y-4">
+                <div className="space-y-3">
+                  {checkoutItems.map((item) => (
+                    <div key={item.id} className="rounded-lg border bg-background p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm font-medium">{item.name}</p>
+                        {item.lowestTotalPrice === null ? (
+                          <p className="text-xs text-muted-foreground">Aguardando preço</p>
+                        ) : (
+                          <p className="text-sm font-semibold">{brl(item.lowestTotalPrice)}</p>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
+
+                <div className="rounded-lg border bg-background p-4">
+                  <p className="text-xs text-muted-foreground">Menor preço total</p>
+                  <p className="mt-1 text-lg font-semibold">{brl(data?.summary.lowestTotalListPrice ?? 0)}</p>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Valor médio dos itens: {brl(data?.summary.averageTotalListPrice ?? 0)}
+                  </p>
+                </div>
               </div>
             )}
           </CardContent>
