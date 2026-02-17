@@ -58,16 +58,9 @@ export default function HomePage() {
     return map;
   }, [data]);
   const checkoutItems = useMemo(() => {
-    const priceByName = new Map<string, (CalculationResponse["items"][number] & { highestTotalPrice: number })>();
+    const priceByName = new Map<string, CalculationResponse["items"][number]>();
     for (const item of data?.items ?? []) {
-      const highestUnitPriceFromOffers = item.offers.reduce((maxPrice, offer) => {
-        return Math.max(maxPrice, offer.normalizedPricePerUserUnit);
-      }, 0);
-      const highestUnitPrice = highestUnitPriceFromOffers > 0 ? highestUnitPriceFromOffers : item.averageUnitPrice;
-      priceByName.set(normalizeItemName(item.itemName), {
-        ...item,
-        highestTotalPrice: highestUnitPrice * item.quantity
-      });
+      priceByName.set(normalizeItemName(item.itemName), item);
     }
 
     return items
@@ -78,16 +71,10 @@ export default function HomePage() {
         return {
           id: item.id,
           name: item.name.trim(),
-          quantity: item.quantity,
-          unit: pricedItem?.unit ?? null,
-          lowestTotalPrice: pricedItem?.lowestTotalPrice ?? null,
-          highestTotalPrice: pricedItem?.highestTotalPrice ?? null
+          lowestTotalPrice: pricedItem?.lowestTotalPrice ?? null
         };
       });
   }, [data, items]);
-  const highestTotalListPrice = useMemo(() => {
-    return checkoutItems.reduce((sum, item) => sum + (item.highestTotalPrice ?? 0), 0);
-  }, [checkoutItems]);
 
   useEffect(() => {
     void refreshDevStatus();
@@ -387,41 +374,18 @@ export default function HomePage() {
               <div className="space-y-3">
                 {checkoutItems.map((item) => (
                   <div key={item.id} className="rounded-lg border bg-background p-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-medium">{item.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {item.quantity} {item.unit ?? "un"}
-                        </p>
-                      </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-medium">{item.name}</p>
                       {item.lowestTotalPrice === null ? (
                         <p className="text-xs text-muted-foreground">Aguardando preço</p>
                       ) : (
-                        <div className="text-right">
-                          <p className="text-xs text-muted-foreground">de {brl(item.lowestTotalPrice)}</p>
-                          <p className="text-sm font-semibold">até {brl(item.highestTotalPrice ?? item.lowestTotalPrice)}</p>
-                        </div>
+                        <p className="text-sm font-semibold">{brl(item.lowestTotalPrice)}</p>
                       )}
                     </div>
                   </div>
                 ))}
               </div>
             )}
-
-            <div className="space-y-2 rounded-lg border bg-background p-4">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Itens no checkout</span>
-                <span className="font-medium">{checkoutItems.length}</span>
-              </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Menor total</span>
-                <span className="font-semibold">{brl(data?.summary.lowestTotalListPrice ?? 0)}</span>
-              </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Maior total</span>
-                <span className="font-semibold">{brl(highestTotalListPrice)}</span>
-              </div>
-            </div>
           </CardContent>
         </Card>
       </div>

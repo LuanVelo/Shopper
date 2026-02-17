@@ -143,6 +143,9 @@ Métricas para card de desenvolvimento:
 - `%` de produtos com erro de preço.
 
 ## Tela (frontend)
+- Layout em duas colunas.
+- Coluna esquerda: entrada de itens, resultado em tempo real, `Categorias por fonte` e `Dev Status`.
+- Coluna direita: `Resumo do checkout` com apenas nome do item e menor valor encontrado.
 - Entrada de itens linha a linha (`nome + quantidade`).
 - Resultado atualizado em tempo real.
 - Link `Ver oferta` no item com menor preço quando disponível.
