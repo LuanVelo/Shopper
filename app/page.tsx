@@ -175,15 +175,16 @@ export default function HomePage() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 px-4 py-8 md:px-8">
+    <main className="mx-auto flex min-h-screen w-full max-w-[1440px] flex-col gap-6 px-4 py-8 md:px-8">
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.7fr)_360px]">
         <div className="space-y-6">
           <Card>
             <CardHeader>
               <CardTitle>Shopper v0 · Lista Inteligente de Supermercado</CardTitle>
-              <p className="text-sm text-muted-foreground">
-                Fontes: Prezunic, Zona Sul e Extra. Exibindo menor preço e média simples por item e para a lista.
-              </p>
+          <p className="text-sm text-muted-foreground">
+            Fontes: Prezunic, Zona Sul, Extra e Supermarket Delivery. Exibindo menor preço e média simples por item e
+            para a lista.
+          </p>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid gap-2 md:max-w-xs">
