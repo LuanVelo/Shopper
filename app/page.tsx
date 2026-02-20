@@ -1,413 +1,593 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Loader2, RefreshCw, Plus, Trash2, ExternalLink } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { DEFAULT_CEP, SOURCE_CATEGORIES } from "@/lib/categories";
-import { normalizeItemName } from "@/lib/normalization";
-import { brl } from "@/lib/utils";
-import { CalculationResponse } from "@/types";
+import { useEffect, useRef, useState } from "react";
+import { Loader2, Minus, Plus, Search, X } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { gsap } from "gsap";
+import { DevModePage } from "./dev-mode";
 
-type ItemDraft = {
+type CatalogSuggestion = {
+  id: string;
+  name: string;
+  unit: string;
+  minPrice: number;
+};
+
+type ResultItem = {
   id: string;
   name: string;
   quantity: number;
+  unit: string;
+  minPrice: number;
 };
 
-type DevStatusResponse = {
-  itemsCount: number;
-  itemsByCategory: Array<{ category: string; count: number }>;
-  priceErrorPercent: number;
-  totals: {
-    termsCount: number;
-    snapshotsCount: number;
-    offersCount: number;
-  };
-  cacheUpdatedAt?: string | null;
+type UndoAction = {
+  item: ResultItem;
+  index: number;
 };
 
-const INITIAL_ITEM_ID = "item-1";
-let itemSequence = 2;
-
-function nextItemId(): string {
-  const id = `item-${itemSequence}`;
-  itemSequence += 1;
-  return id;
-}
+const CURRENCY = new Intl.NumberFormat("pt-BR", {
+  style: "currency",
+  currency: "BRL"
+});
 
 export default function HomePage() {
-  const [cep, setCep] = useState(DEFAULT_CEP);
-  const [items, setItems] = useState<ItemDraft[]>([{ id: INITIAL_ITEM_ID, name: "", quantity: 1 }]);
-  const [data, setData] = useState<CalculationResponse | null>(null);
-  const [devStatus, setDevStatus] = useState<DevStatusResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [updating, setUpdating] = useState(false);
-  const [updateInfo, setUpdateInfo] = useState<string>("Rotina automática: todo dia 5 às 03:00");
+  const searchParams = useSearchParams();
 
-  const hasValidItems = useMemo(() => items.some((item) => item.name.trim() && item.quantity > 0), [items]);
-  const ruleMap = useMemo(() => {
-    const map = new Map<string, { min: number; step: number }>();
-    for (const item of data?.items ?? []) {
-      map.set(normalizeItemName(item.itemName), {
-        min: item.quantityRule.min,
-        step: item.quantityRule.step
-      });
-    }
-    return map;
-  }, [data]);
-  const checkoutItems = useMemo(() => {
-    const priceByName = new Map<string, CalculationResponse["items"][number]>();
-    for (const item of data?.items ?? []) {
-      priceByName.set(normalizeItemName(item.itemName), item);
-    }
+  if (searchParams.get("mode") === "dev") {
+    return <DevModePage />;
+  }
 
-    return items
-      .filter((item) => item.name.trim() && item.quantity > 0)
-      .map((item) => {
-        const normalizedName = normalizeItemName(item.name);
-        const pricedItem = priceByName.get(normalizedName);
-        return {
-          id: item.id,
-          name: item.name.trim(),
-          lowestTotalPrice: pricedItem?.lowestTotalPrice ?? null
-        };
-      });
-  }, [data, items]);
+  return <ShopperUiPhaseFlow />;
+}
+
+function ShopperUiPhaseFlow() {
+  const [cep, setCep] = useState("22470-220");
+  const [cepDraft, setCepDraft] = useState("22470-220");
+  const [isCepEditorOpen, setIsCepEditorOpen] = useState(false);
+  const [isCepHover, setIsCepHover] = useState(false);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<ResultItem[]>([]);
+  const [filteredSuggestions, setFilteredSuggestions] = useState<CatalogSuggestion[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [didSearch, setDidSearch] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const [undoAction, setUndoAction] = useState<UndoAction | null>(null);
+  const searchWrapRef = useRef<HTMLDivElement | null>(null);
+  const topAreaRef = useRef<HTMLDivElement | null>(null);
+  const resultAreaRef = useRef<HTMLDivElement | null>(null);
+  const hadItemsRef = useRef(false);
+  const undoTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cepEditButtonRef = useRef<HTMLButtonElement | null>(null);
+  const cepMetaRef = useRef<HTMLDivElement | null>(null);
+  const cepInputRef = useRef<HTMLInputElement | null>(null);
+  const searchPlaceholderRef = useRef<HTMLSpanElement | null>(null);
 
   useEffect(() => {
-    void refreshDevStatus();
-  }, []);
-
-  useEffect(() => {
-    if (!hasValidItems) {
-      setData(null);
+    const searchTerm = query.trim();
+    if (!searchTerm) {
+      setFilteredSuggestions([]);
+      setIsSearching(false);
+      setDidSearch(false);
       return;
     }
 
+    const controller = new AbortController();
+    setIsSearching(true);
+    setDidSearch(false);
+
     const timeout = setTimeout(async () => {
-      setLoading(true);
       try {
-        const response = await fetch("/api/calculate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ cep, items })
+        const response = await fetch(`/api/search?term=${encodeURIComponent(searchTerm)}`, {
+          signal: controller.signal
         });
-        const json = (await response.json()) as CalculationResponse;
-        setData(json);
-        void refreshDevStatus();
+
+        if (!response.ok) {
+          setFilteredSuggestions([]);
+          return;
+        }
+
+        const json = (await response.json()) as { suggestions?: CatalogSuggestion[] };
+        setFilteredSuggestions(Array.isArray(json.suggestions) ? json.suggestions : []);
+      } catch {
+        if (!controller.signal.aborted) {
+          setFilteredSuggestions([]);
+        }
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) {
+          setIsSearching(false);
+          setDidSearch(true);
+        }
       }
-    }, 450);
+    }, 260);
 
-    return () => clearTimeout(timeout);
-  }, [cep, items, hasValidItems]);
+    return () => {
+      controller.abort();
+      clearTimeout(timeout);
+    };
+  }, [query]);
 
-  function updateItem(id: string, patch: Partial<ItemDraft>) {
-    setItems((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  useEffect(() => {
+    if (filteredSuggestions.length === 0) {
+      setPreviewId(null);
+      return;
+    }
+
+    if (!previewId || !filteredSuggestions.some((item) => item.id === previewId)) {
+      setPreviewId(filteredSuggestions[0].id);
+    }
+  }, [filteredSuggestions, previewId]);
+
+  useEffect(() => {
+    function onClickOutside(event: MouseEvent) {
+      if (!searchWrapRef.current) return;
+      if (!searchWrapRef.current.contains(event.target as Node)) {
+        setFocused(false);
+      }
+    }
+
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
+
+  useEffect(() => {
+    const hasItems = results.length > 0;
+    if (hasItems && !hadItemsRef.current && topAreaRef.current && resultAreaRef.current) {
+      const timeline = gsap.timeline({ defaults: { ease: "power2.out" } });
+      timeline
+        .fromTo(topAreaRef.current, { y: 42, opacity: 0.94 }, { y: 0, opacity: 1, duration: 0.5 })
+        .fromTo(
+          resultAreaRef.current,
+          { y: 24, opacity: 0, scale: 0.985 },
+          { y: 0, opacity: 1, scale: 1, duration: 0.45 },
+          "-=0.15"
+        );
+    }
+
+    hadItemsRef.current = hasItems;
+  }, [results.length]);
+
+  useEffect(() => {
+    return () => {
+      if (undoTimeoutRef.current) {
+        clearTimeout(undoTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!cepEditButtonRef.current) return;
+    gsap.to(cepEditButtonRef.current, {
+      opacity: isCepHover ? 1 : 0,
+      x: isCepHover ? 0 : 6,
+      duration: 0.2,
+      ease: "power2.out"
+    });
+  }, [isCepHover]);
+
+  useEffect(() => {
+    if (!cepMetaRef.current) return;
+    gsap.to(cepMetaRef.current, {
+      x: isCepHover ? -52 : 0,
+      duration: 0.2,
+      ease: "power2.out"
+    });
+  }, [isCepHover]);
+
+  useEffect(() => {
+    if (!isCepEditorOpen || !cepInputRef.current) return;
+    gsap.fromTo(cepInputRef.current, { y: 6, opacity: 0 }, { y: 0, opacity: 1, duration: 0.18, ease: "power2.out" });
+    cepInputRef.current.focus();
+    cepInputRef.current.select();
+  }, [isCepEditorOpen]);
+
+  useEffect(() => {
+    if (!searchPlaceholderRef.current) return;
+    const shouldHidePlaceholder = focused || query.trim().length > 0;
+    gsap.to(searchPlaceholderRef.current, {
+      autoAlpha: shouldHidePlaceholder ? 0 : 1,
+      y: shouldHidePlaceholder ? -4 : 0,
+      duration: 0.22,
+      ease: "power2.out"
+    });
+  }, [focused, query]);
+
+  const noResultsFound = !isSearching && didSearch && filteredSuggestions.length === 0 && query.trim().length > 0;
+  const showSuggestionLayer = focused && query.trim().length > 0 && (isSearching || filteredSuggestions.length > 0 || noResultsFound);
+
+  function quantityStepByUnit(unit: string): number {
+    switch (unit) {
+      case "kg":
+      case "l":
+        return 0.5;
+      case "g":
+      case "ml":
+        return 100;
+      case "un":
+      default:
+        return 1;
+    }
   }
 
-  function getRuleByName(name: string) {
-    const normalized = normalizeItemName(name);
-    return ruleMap.get(normalized) ?? null;
+  function normalizeQuantity(quantity: number, unit: string): number {
+    const step = quantityStepByUnit(unit);
+    const steps = Math.round(quantity / step);
+    const precision = step.toString().includes(".") ? step.toString().split(".")[1].length : 0;
+    return Number((steps * step).toFixed(precision));
   }
 
-  function snapQuantity(quantity: number, rule: { min: number; step: number }) {
-    const safeQty = Number.isFinite(quantity) && quantity > 0 ? quantity : rule.min;
-    if (safeQty <= rule.min) return rule.min;
-    const steps = Math.round((safeQty - rule.min) / rule.step);
-    const snapped = rule.min + steps * rule.step;
-    const precision = Math.max(
-      rule.min.toString().includes(".") ? rule.min.toString().split(".")[1].length : 0,
-      rule.step.toString().includes(".") ? rule.step.toString().split(".")[1].length : 0
-    );
-    return Number(snapped.toFixed(precision));
+  function formatQuantity(quantity: number, unit: string): string {
+    if (unit === "un") return `${Math.round(quantity)}`;
+    if (unit === "g" || unit === "ml") return `${Math.round(quantity)}`;
+    return `${quantity.toFixed(1).replace(/\\.0$/, "")}`;
   }
 
-  function addItem() {
-    setItems((current) => [...current, { id: nextItemId(), name: "", quantity: 1 }]);
+  function addItem(suggestion: CatalogSuggestion) {
+    const step = quantityStepByUnit(suggestion.unit);
+    setResults((current) => {
+      const existing = current.find((item) => item.name === suggestion.name);
+      if (existing) {
+        return current.map((item) =>
+          item.name === suggestion.name
+            ? {
+                ...item,
+                quantity: normalizeQuantity(item.quantity + step, item.unit),
+                minPrice: suggestion.minPrice
+              }
+            : item
+        );
+      }
+
+      return [
+        ...current,
+        {
+          id: `${suggestion.id}-${Date.now()}`,
+          name: suggestion.name,
+          quantity: step,
+          unit: suggestion.unit,
+          minPrice: suggestion.minPrice
+        }
+      ];
+    });
+    setQuery("");
+    setFocused(false);
+  }
+
+  function queueUndo(action: UndoAction) {
+    if (undoTimeoutRef.current) {
+      clearTimeout(undoTimeoutRef.current);
+    }
+    setUndoAction(action);
+    undoTimeoutRef.current = setTimeout(() => {
+      setUndoAction(null);
+      undoTimeoutRef.current = null;
+    }, 6000);
+  }
+
+  function undoLastChange() {
+    if (!undoAction) return;
+    if (undoTimeoutRef.current) {
+      clearTimeout(undoTimeoutRef.current);
+      undoTimeoutRef.current = null;
+    }
+
+    setResults((current) => {
+      const next = [...current];
+      const safeIndex = Math.max(0, Math.min(undoAction.index, next.length));
+      next.splice(safeIndex, 0, undoAction.item);
+      return next;
+    });
+    setUndoAction(null);
+  }
+
+  function openCepEditor() {
+    setCepDraft(cep);
+    setIsCepEditorOpen(true);
+  }
+
+  function confirmCepChange() {
+    const nextCep = cepDraft.trim();
+    if (nextCep) {
+      setCep(nextCep);
+    }
+    setIsCepEditorOpen(false);
   }
 
   function removeItem(id: string) {
-    setItems((current) => (current.length === 1 ? current : current.filter((item) => item.id !== id)));
+    setResults((current) => {
+      const index = current.findIndex((item) => item.id === id);
+      if (index === -1) return current;
+      queueUndo({ item: current[index], index });
+      return current.filter((item) => item.id !== id);
+    });
   }
 
-  async function refreshDevStatus() {
-    try {
-      const response = await fetch("/api/dev-status");
-      const json = (await response.json()) as DevStatusResponse;
-      setDevStatus(json);
-    } catch {
-      setDevStatus(null);
-    }
+  function incrementItemQuantity(id: string) {
+    setResults((current) =>
+      current.map((item) => {
+        if (item.id !== id) return item;
+        const step = quantityStepByUnit(item.unit);
+        return { ...item, quantity: normalizeQuantity(item.quantity + step, item.unit) };
+      })
+    );
   }
 
-  async function triggerManualUpdate() {
-    setUpdating(true);
-    setUpdateInfo("Atualizando fontes... estimativa de até 30s para listas já pesquisadas.");
-    try {
-      const response = await fetch("/api/update-prices", { method: "POST" });
-      const json = await response.json();
-      setUpdateInfo(
-        `Atualizado em ${new Date(json.updatedAt).toLocaleString("pt-BR")}. Itens recarregados: ${json.updated}. Tempo: ${json.elapsedSeconds}s.`
-      );
-      void refreshDevStatus();
-    } catch {
-      setUpdateInfo("Falha ao atualizar manualmente. Tente novamente.");
-    } finally {
-      setUpdating(false);
-    }
+  function decrementItemQuantity(id: string) {
+    setResults((current) =>
+      current.flatMap((item, index) => {
+        if (item.id !== id) return [item];
+        const step = quantityStepByUnit(item.unit);
+        const nextQuantity = normalizeQuantity(item.quantity - step, item.unit);
+        if (nextQuantity <= 0) {
+          queueUndo({ item, index });
+          return [];
+        }
+        return [{ ...item, quantity: nextQuantity }];
+      })
+    );
   }
+
+  const totalItems = results.reduce((sum, item) => sum + item.quantity, 0);
+  const lineTotals = results.map((item) => item.quantity * item.minPrice);
+  const minTotal = lineTotals.reduce((sum, price) => sum + price, 0);
+  const avgUnitPrice = results.length === 0 ? 0 : results.reduce((sum, item) => sum + item.minPrice, 0) / results.length;
+  const maxUnitPrice = results.length === 0 ? 0 : Math.max(...results.map((item) => item.minPrice));
+
+  const previewItem = filteredSuggestions.find((item) => item.id === previewId) ?? filteredSuggestions[0];
+  const isNoItemsState = results.length === 0;
+  const isSearchActive = focused;
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-[1440px] flex-col gap-6 px-4 py-8 md:px-8">
-      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.7fr)_360px]">
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Shopper v0 · Lista Inteligente de Supermercado</CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Fontes: Prezunic, Zona Sul, Extra e Supermarket Delivery. Exibindo menor preço e média simples por item e
-            para a lista.
-          </p>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-2 md:max-w-xs">
-                <label className="text-sm font-medium">CEP da pesquisa</label>
-                <Input value={cep} onChange={(event) => setCep(event.target.value)} placeholder="22470-220" />
+    <main
+      className={`min-h-screen bg-white px-4 text-[#121212] ${
+        isNoItemsState ? "flex items-center justify-center py-4" : "py-8"
+      }`}
+    >
+      <section className="mx-auto w-full max-w-[540px] rounded-3xl bg-transparent">
+        <div ref={topAreaRef} className="relative z-30">
+          <header className="mb-[18px] flex items-end justify-between">
+            <h1 className="text-[24px] font-normal leading-[24px] tracking-[-0.02em]">Shopper</h1>
+            <div
+              className="relative flex items-center gap-[5px] text-[14px] font-normal leading-[14px] text-[#555]"
+              onMouseEnter={() => setIsCepHover(true)}
+              onMouseLeave={() => setIsCepHover(false)}
+            >
+              <div ref={cepMetaRef} className="flex items-center gap-[5px]">
+                <span>CEP:</span>
+                <span className="w-[98px] text-right">{cep}</span>
               </div>
+              <button
+                ref={cepEditButtonRef}
+                type="button"
+                onClick={openCepEditor}
+                className={`absolute right-0 rounded-full bg-[#404040] px-2.5 py-1 text-[11px] font-medium leading-[11px] text-white ${
+                  isCepHover ? "pointer-events-auto" : "pointer-events-none"
+                }`}
+                style={{ opacity: 0, transform: "translateX(6px)" }}
+              >
+                edit
+              </button>
+            </div>
+          </header>
 
-              <div className="space-y-3">
-                {items.map((item) => {
-                  const rule = getRuleByName(item.name);
-                  return (
-                    <div key={item.id} className="grid gap-2 md:grid-cols-[1fr_200px_52px]">
-                      <Input
-                        placeholder="Ex.: arroz, leite, banana"
-                        value={item.name}
-                        onChange={(event) => updateItem(item.id, { name: event.target.value })}
-                      />
-                      <Input
-                        type="number"
-                        min={rule?.min ?? 0.01}
-                        step={rule?.step ?? 0.01}
-                        placeholder="Quantidade"
-                        value={item.quantity}
-                        onChange={(event) => updateItem(item.id, { quantity: Number(event.target.value) || 0 })}
-                        onBlur={() => {
-                          if (!rule) return;
-                          updateItem(item.id, { quantity: snapQuantity(item.quantity, rule) });
-                        }}
-                      />
-                      <Button variant="outline" onClick={() => removeItem(item.id)} aria-label="remover item">
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  );
-                })}
-
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="outline" onClick={addItem}>
-                    <Plus className="mr-2 h-4 w-4" /> Adicionar item
-                  </Button>
-                  <Button variant="outline" onClick={triggerManualUpdate} disabled={updating}>
-                    {updating ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                      <RefreshCw className="mr-2 h-4 w-4" />
-                    )}
-                    Atualizar preços manualmente
-                  </Button>
-                </div>
-                <p className="text-xs text-muted-foreground">{updateInfo}</p>
-                <p className="text-xs text-muted-foreground">
-                  A unidade é definida automaticamente pelo padrão encontrado nas ofertas dos mercados (ex.: carne em
-                  kg, leite em L). Informe a quantidade nessa mesma unidade.
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  A quantidade segue passos permitidos por item (ex.: 1 em 1, 500g em 500g), conforme as embalagens
-                  encontradas nos sites.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Resultado em tempo real</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {loading && (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Recalculando...
-                </div>
-              )}
-
-              {!loading && !data && <p className="text-sm text-muted-foreground">Adicione itens para calcular.</p>}
-
-              {!loading && data && (
-                <div className="space-y-4">
-                  <div className="overflow-auto rounded-md border">
-                    <table className="w-full min-w-[780px] text-sm">
-                      <thead className="bg-muted/70 text-left">
-                        <tr>
-                          <th className="p-3">Item</th>
-                          <th className="p-3">Qtd</th>
-                          <th className="p-3">Melhor fonte</th>
-                          <th className="p-3">Menor preço unitário</th>
-                          <th className="p-3">Preço médio unitário</th>
-                          <th className="p-3">Total menor</th>
-                          <th className="p-3">Total médio</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {data.items.map((item) => (
-                          <tr key={`${item.itemName}-${item.unit}`} className="border-t">
-                            <td className="p-3 font-medium">
-                              <div className="flex items-center gap-2">
-                                <span>{item.itemName}</span>
-                                {item.bestOfferUrl ? (
-                                  <a
-                                    href={item.bestOfferUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-1 rounded border px-2 py-1 text-xs font-medium hover:bg-muted"
-                                    title={item.bestOfferTitle ?? `Abrir oferta de ${item.itemName}`}
-                                  >
-                                    Ver oferta <ExternalLink className="h-3 w-3" />
-                                  </a>
-                                ) : (
-                                  <span className="text-xs text-muted-foreground">
-                                    {item.hasRealOffers ? "Sem link" : "Sem oferta real"}
-                                  </span>
-                                )}
-                              </div>
-                            </td>
-                            <td className="p-3">
-                              {item.quantity} {item.unit}
-                            </td>
-                            <td className="p-3">{item.bestSource ?? "-"}</td>
-                            <td className="p-3">
-                              {brl(item.lowestUnitPrice)} / {item.unit}
-                            </td>
-                            <td className="p-3">
-                              {brl(item.averageUnitPrice)} / {item.unit}
-                            </td>
-                            <td className="p-3">{brl(item.lowestTotalPrice)}</td>
-                            <td className="p-3">{brl(item.averageTotalPrice)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  <div className="grid gap-3 md:grid-cols-3">
-                    <Summary label="Quantidade de itens" value={String(data.summary.itemsCount)} />
-                    <Summary label="Menor total da lista" value={brl(data.summary.lowestTotalListPrice)} />
-                    <Summary label="Total médio esperado" value={brl(data.summary.averageTotalListPrice)} />
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Categorias por fonte</CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-3">
-              {Object.entries(SOURCE_CATEGORIES).map(([source, categories]) => (
-                <div key={source} className="rounded-lg border bg-background p-3">
-                  <h4 className="mb-2 text-sm font-semibold capitalize">{source}</h4>
-                  <p className="text-xs text-muted-foreground">{categories.join(" · ")}</p>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Dev Status</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {!devStatus ? (
-                <p className="text-sm text-muted-foreground">Carregando status...</p>
+          <div ref={searchWrapRef} className="relative z-40">
+            <div
+              className={`relative flex h-[44px] items-center gap-3 rounded-[58px] border bg-[#f9f9f9] px-[18px] ${
+                isSearchActive ? "border-[#404040]" : "border-[#e2e2e2]"
+              }`}
+            >
+              {isSearching ? (
+                <Loader2 className="h-[17px] w-[17px] animate-spin text-[#404040]" />
               ) : (
-                <>
-                  <div className="grid gap-3 md:grid-cols-3">
-                    <Summary label="Número de itens" value={String(devStatus.itemsCount)} />
-                    <Summary label="Termos catalogados" value={String(devStatus.totals.termsCount)} />
-                    <Summary label="% com erro de preço" value={`${devStatus.priceErrorPercent.toFixed(2)}%`} />
-                  </div>
-
-                  <div className="rounded-lg border bg-background p-4">
-                    <p className="text-sm font-medium">Itens em cada categoria</p>
-                    {devStatus.itemsByCategory.length === 0 ? (
-                      <p className="mt-2 text-xs text-muted-foreground">Sem dados no cache ainda.</p>
-                    ) : (
-                      <div className="mt-2 grid gap-2 md:grid-cols-2">
-                        {devStatus.itemsByCategory.map((entry) => (
-                          <div key={entry.category} className="flex items-center justify-between text-sm">
-                            <span>{entry.category}</span>
-                            <span className="font-medium">{entry.count}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </>
+                <Search className={`h-[17px] w-[17px] ${isSearchActive ? "text-[#404040]" : "text-[#7a7a7a]"}`} />
               )}
-            </CardContent>
-          </Card>
-        </div>
+              <input
+                value={query}
+                onFocus={() => setFocused(true)}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder=""
+                aria-label="Digite seu item"
+                className={`h-full flex-1 bg-transparent text-[14px] font-light leading-[14px] text-[#404040] outline-none ${
+                  isSearchActive ? "placeholder:text-[#404040]" : "placeholder:text-[#7a7a7a]"
+                }`}
+              />
+              <span
+                ref={searchPlaceholderRef}
+                className="pointer-events-none absolute left-[47px] top-[15px] text-[14px] font-light leading-[14px] text-[#7a7a7a]"
+                style={{ opacity: 1 }}
+              >
+                Digite seu item
+              </span>
+            </div>
 
-        <Card className="xl:sticky xl:top-8">
-          <CardHeader>
-            <CardTitle>Resumo do checkout</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {checkoutItems.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Adicione itens para montar seu checkout.</p>
-            ) : (
-              <div className="space-y-4">
-                <div className="space-y-3">
-                  {checkoutItems.map((item) => (
-                    <div key={item.id} className="rounded-lg border bg-background p-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="text-sm font-medium">{item.name}</p>
-                        {item.lowestTotalPrice === null ? (
-                          <p className="text-xs text-muted-foreground">Aguardando preço</p>
-                        ) : (
-                          <p className="text-sm font-semibold">{brl(item.lowestTotalPrice)}</p>
-                        )}
-                      </div>
+            {showSuggestionLayer && (
+              <div className="absolute left-0 right-0 top-[46px] z-50 overflow-hidden rounded-[22px] border border-[#3f3f3f] bg-white">
+                <div className="max-h-[168px] overflow-y-auto">
+                  {isSearching ? (
+                    <div className="flex items-center gap-2 px-3 py-3 text-[12px] text-[#6a6a6a]">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Buscando itens...
                     </div>
-                  ))}
-                </div>
-
-                <div className="rounded-lg border bg-background p-4">
-                  <p className="text-xs text-muted-foreground">Menor preço total</p>
-                  <p className="mt-1 text-lg font-semibold">{brl(data?.summary.lowestTotalListPrice ?? 0)}</p>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    Valor médio dos itens: {brl(data?.summary.averageTotalListPrice ?? 0)}
-                  </p>
+                  ) : noResultsFound ? (
+                    <div className="px-3 py-3 text-[12px] text-[#6a6a6a]">Nenhum resultado encontrado</div>
+                  ) : (
+                  filteredSuggestions.map((item) => (
+                    <div
+                      key={item.id}
+                      className="group flex items-center justify-between gap-3 bg-white py-2 pl-[30px] pr-3 transition-colors hover:bg-[#f9f9f9]"
+                      onMouseEnter={() => setPreviewId(item.id)}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setPreviewId(item.id)}
+                        className="flex-1 truncate text-left text-[14px] font-normal leading-[14px] text-[#7a7a7a] group-hover:font-semibold group-hover:text-[#404040]"
+                      >
+                        {item.name}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => addItem(item)}
+                        className="rounded-full bg-transparent px-3 py-1 text-[14px] font-normal leading-[14px] text-[#7a7a7a] group-hover:bg-[#404040] group-hover:text-white"
+                      >
+                        Add item
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+                <div className="flex items-center justify-between border-t border-[#efefef] bg-[#fcfcfc] px-3 py-2 text-[10px] text-[#7b7b7b]">
+                  <span>{isSearching ? "Buscando..." : "Buscando variações e similares..."}</span>
+                  {previewItem ? <span>{CURRENCY.format(previewItem.minPrice)} / {previewItem.unit}</span> : null}
                 </div>
               </div>
             )}
-          </CardContent>
-        </Card>
-      </div>
-    </main>
-  );
-}
+          </div>
+        </div>
 
-function Summary({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border bg-background p-4">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="mt-1 text-lg font-semibold">{value}</p>
-    </div>
+        {results.length > 0 && (
+          <div ref={resultAreaRef} className="mt-[18px] space-y-[18px]">
+            <section className="overflow-hidden rounded-[22px] border border-[#404040] bg-white p-[16px_16px_8px_16px]">
+              <div className="flex items-center gap-3 border-b border-[#f0f0f0] py-1">
+                <p className="flex-1 text-[12px] font-semibold leading-[12px] text-[#404040]">Nome do item</p>
+                <p className="w-[77px] text-right text-[12px] font-semibold leading-[12px] text-[#404040]">
+                  Menor preço
+                </p>
+                <p className="w-[69px] text-center text-[12px] font-semibold leading-[12px] text-[#404040]">
+                  Quantidade
+                </p>
+                <p className="w-[60px] text-right text-[12px] font-semibold leading-[12px] text-[#404040]">Actions</p>
+              </div>
+
+              {results.map((item) => (
+                <div key={item.id} className="flex items-center gap-3 py-2">
+                  <p className="flex-1 text-[14px] font-normal leading-[14px] text-[#404040]">{item.name}</p>
+                  <p className="w-[79px] text-right text-[12px] font-normal leading-[12px] text-[#404040]">
+                    {CURRENCY.format(item.minPrice)}
+                  </p>
+                  <div className="flex w-[69px] items-center justify-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => decrementItemQuantity(item.id)}
+                      className="inline-flex h-5 w-5 items-center justify-center rounded border border-[#d9d9d9] text-[#555] hover:bg-[#f6f6f6]"
+                      aria-label={`diminuir quantidade de ${item.name}`}
+                    >
+                      <Minus className="h-3 w-3" />
+                    </button>
+                    <p className="min-w-[24px] text-center text-[12px] font-normal leading-[12px] text-[#404040]">
+                      {formatQuantity(item.quantity, item.unit)}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => incrementItemQuantity(item.id)}
+                      className="inline-flex h-5 w-5 items-center justify-center rounded border border-[#d9d9d9] text-[#555] hover:bg-[#f6f6f6]"
+                      aria-label={`aumentar quantidade de ${item.name}`}
+                    >
+                      <Plus className="h-3 w-3" />
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeItem(item.id)}
+                    className="inline-flex w-[60px] items-center justify-end gap-1 text-[12px] font-normal leading-[12px] text-[#7a7a7a]"
+                  >
+                    Delete <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </section>
+
+            <section className="overflow-hidden rounded-[22px] border border-[#404040] bg-white p-[16px_16px_8px_16px]">
+              <div className="mb-0 flex items-center gap-3 border-b border-[#f0f0f0] py-1">
+                <span className="flex-1 text-[12px] font-semibold leading-[12px] text-[#404040]">
+                  Custo da lista ({totalItems} itens)
+                </span>
+                <span className="w-[77px] text-right text-[12px] font-semibold leading-[12px] text-[#404040]">
+                  Menor preço
+                </span>
+              </div>
+
+              <div className="pt-0">
+                <div className="flex items-center gap-3 py-2">
+                  <span className="flex-1 text-[14px] font-semibold leading-[14px] text-[#377c1c]">Menor preço</span>
+                  <span className="w-[79px] text-right text-[12px] font-semibold leading-[12px] text-[#377c1c]">
+                    {CURRENCY.format(minTotal)}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3 py-2">
+                  <span className="flex-1 text-[14px] font-normal leading-[14px] text-[#404040]">Preço médio</span>
+                  <span className="w-[79px] text-right text-[12px] font-normal leading-[12px] text-[#404040]">
+                    {CURRENCY.format(avgUnitPrice)}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3 py-2">
+                  <span className="flex-1 text-[14px] font-normal leading-[14px] text-[#404040]">Maior preço</span>
+                  <span className="w-[79px] text-right text-[12px] font-normal leading-[12px] text-[#404040]">
+                    {CURRENCY.format(maxUnitPrice)}
+                  </span>
+                </div>
+              </div>
+            </section>
+          </div>
+        )}
+
+        {results.length === 0 && (
+          <div className="mt-3 flex items-center gap-2 text-[11px] text-[#8b8b8b]">
+            <Plus className="h-3 w-3" />
+            Comece buscando um item para montar sua lista.
+          </div>
+        )}
+      </section>
+
+      {undoAction && (
+        <div className="fixed bottom-6 right-6 z-[90] w-[340px] rounded-[22px] border border-[#404040] bg-white p-4 shadow-[0_8px_24px_rgba(0,0,0,0.12)]">
+          <p className="text-[14px] leading-[18px] text-[#404040]">Ops, sem querer? Vamos desfazer a mudança.</p>
+          <div className="mt-3 flex justify-end">
+            <button
+              type="button"
+              onClick={undoLastChange}
+              className="rounded-full bg-[#404040] px-3 py-1 text-[14px] font-medium leading-[14px] text-white"
+            >
+              desfazer
+            </button>
+          </div>
+        </div>
+      )}
+
+      {isCepEditorOpen && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/20 px-4">
+          <div className="w-full max-w-[360px] rounded-[22px] border border-[#404040] bg-white p-4">
+            <p className="text-[14px] font-medium leading-[14px] text-[#404040]">Editar CEP</p>
+            <input
+              ref={cepInputRef}
+              value={cepDraft}
+              onChange={(event) => setCepDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") confirmCepChange();
+                if (event.key === "Escape") setIsCepEditorOpen(false);
+              }}
+              className="mt-3 h-[40px] w-full rounded-[12px] border border-[#dcdcdc] px-3 text-[14px] text-[#404040] outline-none focus:border-[#404040]"
+              placeholder="Digite o CEP"
+            />
+            <div className="mt-3 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsCepEditorOpen(false)}
+                className="rounded-full border border-[#404040] px-3 py-1 text-[13px] text-[#404040]"
+              >
+                cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmCepChange}
+                className="rounded-full bg-[#404040] px-3 py-1 text-[13px] text-white"
+              >
+                confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </main>
   );
 }
