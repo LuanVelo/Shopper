@@ -1,41 +1,104 @@
 # Shopper v0
 
-Aplicação web para montar lista de compras de supermercado com comparação entre:
+Aplicação Next.js para montar lista de compras e consultar ofertas de supermercados via scraping.
+
+## Demo online
+- Produção (Vercel): https://shopper-psi-eight.vercel.app?_vercel_share=XPtsipSheYzhe1HEVvtvotPZ3TysgG0y
+
+## Estado atual do produto
+O projeto hoje tem **dois modos de interface**:
+
+1. **UI nova (padrão)** em `/`
+- Fluxo em fases (inicial -> busca ativa -> lista montada).
+- Busca em tempo real por termo via `GET /api/search`.
+- Sugestões com loading, ranking de relevância e estado de item (default/hover).
+- Adição de item na lista.
+- Controle de quantidade com `+/-` respeitando unidade (`un`, `kg`, `g`, `l`, `ml`).
+- Caixa de resumo de custo separada da caixa de itens.
+- Toast de desfazer quando remove item ou zera quantidade.
+- Edição de CEP via interação de hover + modal de confirmação.
+- Microinterações com GSAP (entrada de layout, placeholder da busca, botão edit do CEP).
+
+2. **DEV mode (legado)** em `/?mode=dev`
+- Interface antiga para operação e inspeção.
+- Formulário com múltiplos itens (`nome + quantidade`).
+- Cálculo completo via `POST /api/calculate`.
+- Cards de status (`Dev Status`, categorias por fonte, resumo de checkout).
+- Atualização manual de cache via `POST /api/update-prices`.
+
+## O que cada modo calcula
+- **UI nova (`/`)**: monta lista com base no `minPrice` retornado pelas sugestões de busca (`/api/search`) e calcula totais no frontend.
+- **DEV mode (`/?mode=dev`)**: usa o motor completo de preço (`lib/price-engine.ts`) com menor preço, média, regra de quantidade e fonte vencedora por item.
+
+## Stack
+- Next.js 15 (App Router)
+- React 18 + TypeScript
+- Tailwind CSS
+- GSAP
+- axios + cheerio (scrapers)
+- node-cron (agendamento)
+
+## Fontes de mercado
 - Prezunic
 - Zona Sul
 - Extra
 - Supermarket Delivery
 
-O sistema calcula:
-- menor preço por item;
-- média simples por item;
-- menor total da lista;
-- total médio esperado.
+## APIs (estado atual)
 
-## Stack
-- `Next.js 15`, `React 18`, `TypeScript`
-- `Tailwind CSS` + base de componentes estilo `shadcn/ui`
-- Scraping com `axios` + `cheerio`
-- Agendamento com `node-cron`
+### Consumidas diretamente pela UI nova
+- `GET /api/search?term=<texto>`
+  - Busca ofertas nos 4 scrapers em paralelo.
+  - Remove fallback (`isFallback`).
+  - Deduplica por nome normalizado.
+  - Retorna até 5 sugestões ranqueadas por relevância.
 
-## Arquitetura atual
-- Frontend em `app/page.tsx`.
-- Cálculo em `POST /api/calculate` via `lib/price-engine.ts`.
-- Scrapers por fonte em `lib/scrapers/*`.
-- Cache persistente de consultas em arquivo local:
+### Consumidas pelo DEV mode
+- `POST /api/calculate`
+  - Executa o cálculo completo por item/lista.
+  - Aciona `ensureMonthlyScheduler()`.
+- `GET /api/dev-status`
+  - Métricas de qualidade e volume do cache.
+- `POST /api/update-prices`
+  - Recoleta termos já existentes no cache.
+- `GET /api/update-prices`
+  - Retorna data da última atualização.
+
+### APIs auxiliares de inspeção/dados
+- `GET /api/categories`
+- `GET /api/debug-scrape?term=<item>`
+- `GET /api/zonasul/market-data`
+- `POST /api/zonasul/ingest`
+- `GET /api/zonasul/offers`
+
+## Lógica de preço e cache (motor completo)
+Arquivo principal: `lib/price-engine.ts`
+
+- Cache em memória global (`Map`) + persistência em arquivo local:
   - `data/price-cache/snapshots.json`
-- Atualização manual em `POST /api/update-prices`.
-- Rotina automática mensal no dia 5 às 03:00 (`America/Sao_Paulo`) via `lib/scheduler.ts`.
+- Chave de cache: `source|term-normalized`
+- Evita scrape duplicado simultâneo com `inflight` por chave.
+- Inferência de unidade de referência por dominância nas ofertas.
+- Inferência de regra de quantidade (`min`/`step`) por GCD das embalagens encontradas.
+- Cálculo final por item:
+  - menor preço unitário
+  - preço médio unitário
+  - menor total
+  - total médio
 
-## Fluxo de dados
-1. Usuário informa CEP e itens.
-2. Para cada item e mercado:
-   - se já existe no cache interno, usa cache;
-   - se não existe, faz scrape e salva no cache.
-3. Calcula menor preço e média.
-4. Atualização mensal/manual reprocessa apenas os termos já catalogados no cache.
+## Agendamento automático
+Arquivo: `lib/scheduler.ts`
 
-## Estrutura de pastas
+- Cron mensal: `0 3 5 * *`
+- Timezone: `America/Sao_Paulo`
+- A rotina atualiza termos já presentes no cache.
+
+## Variáveis de ambiente
+- `SUPERMARKETDELIVERY_STORE_REFERENCE`
+  - padrão: `2`
+  - usado no scraper de Supermarket Delivery.
+
+## Estrutura do projeto
 ```text
 app/
   api/
@@ -43,11 +106,14 @@ app/
     categories/route.ts
     debug-scrape/route.ts
     dev-status/route.ts
+    search/route.ts
     update-prices/route.ts
     zonasul/
-      market-data/route.ts
       ingest/route.ts
+      market-data/route.ts
       offers/route.ts
+  dev-mode.tsx
+  globals.css
   layout.tsx
   page.tsx
 
@@ -62,108 +128,36 @@ lib/
   price-engine.ts
   scheduler.ts
   utils.ts
+  market/schema.ts
+  pipeline/zonasul-ingest.ts
+  storage/market-store.ts
   scrapers/
     common.ts
-    prezunic.ts
-    zonasul.ts
     extra.ts
+    prezunic.ts
     supermarketdelivery.ts
+    zonasul.ts
     zonasul-market.ts
-  market/
-    schema.ts
-  pipeline/
-    zonasul-ingest.ts
-  storage/
-    market-store.ts
 
 types/
   index.ts
   node-cron.d.ts
-
-data/
-  price-cache/
-  scrape-debug/
-  market/
 ```
 
-## Regras de negócio
-
-### Unidade e quantidade
-- Unidade de referência inferida pelas ofertas (`un`, `kg`, `g`, `l`, `ml`).
-- Quantidade segue passo permitido inferido do conjunto de ofertas.
-
-### Regra de compra por pacote
-- Se **não** existe preço explícito por medida no card (`R$/kg`, `R$/g`, `R$/L`, `R$/ml`), o item é tratado como `un`.
-- Exemplo: `Pão de Forma ... 450g` vira `R$/un` (pacote), não `R$/g`.
-
-### Regra de açougue
-- Itens de açougue usam heurísticas para evitar distorções.
-- Match textual usa palavra completa (evita falso positivo de substring, ex.: `ancho` dentro de `kalanchoe`).
-- Se o termo é de açougue, aplica filtro de categoria para manter resultados de carne/peixaria.
-
-### Filtros semânticos
-- Termos ambíguos possuem filtros de relevância dedicados (ex.: `leite`).
-
-## Supermarket Delivery
-- Integração via GraphQL (`nextgentheadless.instaleap.io/api/v3`).
-- Usa `searchProducts` com `clientId` e `storeReference`.
-- `storeReference` padrão: `2`.
-- Pode ser configurado por ambiente:
-  - `SUPERMARKETDELIVERY_STORE_REFERENCE=2`
-
-## Endpoints principais
-
-### `POST /api/calculate`
-Calcula preços da lista.
-
-Exemplo:
-```json
-{
-  "cep": "22470-220",
-  "items": [
-    { "name": "leite", "quantity": 2 },
-    { "name": "ancho", "quantity": 1 }
-  ]
-}
-```
-
-### `POST /api/update-prices`
-Atualiza os termos já existentes no cache interno.
-
-### `GET /api/update-prices`
-Retorna data da última atualização.
-
-### `GET /api/debug-scrape?term=<item>`
-Retorna ofertas por mercado e salva auditoria em `data/scrape-debug/`.
-
-### `GET /api/dev-status`
-Métricas para card de desenvolvimento:
-- número de itens no cache;
-- itens por categoria (heurística);
-- `%` de produtos com erro de preço.
-
-## Tela (frontend)
-- Layout em duas colunas.
-- Coluna esquerda: entrada de itens, resultado em tempo real, `Categorias por fonte` e `Dev Status`.
-- Coluna direita: `Resumo do checkout` com nome do item, menor valor por item, `Menor preço total` (soma dos itens) e valor médio total em menor destaque.
-- Entrada de itens linha a linha (`nome + quantidade`).
-- Resultado atualizado em tempo real.
-- Link `Ver oferta` no item com menor preço quando disponível.
-- Blocos auxiliares: `Categorias por fonte` e `Dev Status`.
-
-## Execução local
+## Rodar localmente
 ```bash
 npm install
 npm run dev
 ```
 
-Abrir no navegador:
-- `http://localhost:3000`
+Abrir:
+- `http://localhost:3000` (UI nova)
+- `http://localhost:3000/?mode=dev` (DEV mode)
 
-Verificações:
+Build de produção:
 ```bash
-npm run typecheck
 npm run build
+npm run start
 ```
 
 ## Scripts
@@ -173,9 +167,10 @@ npm run build
 - `npm run lint`
 - `npm run typecheck`
 
-## Observações
-- Scraping depende da estrutura dos sites e pode exigir manutenção frequente.
-- Cache local fica em `data/price-cache/` e não é versionado no Git.
+## Limitações conhecidas
+- Scrapers dependem da estrutura externa dos sites e podem quebrar com mudanças.
+- Resultados de busca podem variar por disponibilidade momentânea das fontes.
+- Cache persistido localmente não é versionado no Git (`data/price-cache`, `data/scrape-debug`, `data/market`).
 
 ---
-Esse projeto foi desenvolvido com OpenAI Codex.
+Desenvolvido com OpenAI Codex.
