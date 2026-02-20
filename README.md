@@ -26,6 +26,34 @@ O projeto hoje tem **dois modos de interface**:
 - Cards de status (`Dev Status`, categorias por fonte, resumo de checkout).
 - Atualização manual de cache via `POST /api/update-prices`.
 
+## Tela (frontend)
+### UI nova (rota `/`)
+- **Layout de coluna única centralizada** (não usa mais grid de 2 colunas).
+- Cabeçalho com `Shopper` e bloco de CEP no topo.
+- Campo de busca com estados:
+  - inativo (placeholder visível);
+  - ativo (borda destacada + animação de placeholder);
+  - carregando (spinner no lugar da lupa).
+- Dropdown da busca com:
+  - lista de sugestões (até 5 itens);
+  - estado hover do item;
+  - ação `Add item`;
+  - estado vazio: `Nenhum resultado encontrado`.
+- Após adicionar item:
+  - animação GSAP reposicionando o topo;
+  - caixa 1: tabela de itens (`Nome`, `Menor preço`, `Quantidade`, `Actions`);
+  - caixa 2: resumo de custo (`Menor`, `Médio`, `Maior`).
+- Quantidade por item com `+/-`, obedecendo unidade do item:
+  - `un`: passo 1
+  - `kg/l`: passo 0.5
+  - `g/ml`: passo 100
+- Remoção de item com toast de desfazer no canto inferior direito.
+- Edição de CEP com microinteração no hover + modal (`confirmar/cancelar`).
+
+### DEV mode (rota `/?mode=dev`)
+- Mantido para diagnóstico e operação técnica.
+- Esta tela **continua** no formato antigo com cards e mais detalhes de cálculo.
+
 ## O que cada modo calcula
 - **UI nova (`/`)**: monta lista com base no `minPrice` retornado pelas sugestões de busca (`/api/search`) e calcula totais no frontend.
 - **DEV mode (`/?mode=dev`)**: usa o motor completo de preço (`lib/price-engine.ts`) com menor preço, média, regra de quantidade e fonte vencedora por item.
