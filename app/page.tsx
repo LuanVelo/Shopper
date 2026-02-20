@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Suspense } from "react";
 import { Loader2, Minus, Plus, Search, X } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { gsap } from "gsap";
@@ -32,6 +33,14 @@ const CURRENCY = new Intl.NumberFormat("pt-BR", {
 });
 
 export default function HomePage() {
+  return (
+    <Suspense fallback={null}>
+      <HomePageContent />
+    </Suspense>
+  );
+}
+
+function HomePageContent() {
   const searchParams = useSearchParams();
 
   if (searchParams.get("mode") === "dev") {
