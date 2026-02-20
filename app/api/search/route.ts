@@ -26,12 +26,41 @@ type SuggestionAccumulator = {
   productUrl: string | null;
 };
 
+type SourceResult = {
+  source: SourceName;
+  offers: Offer[];
+  ok: boolean;
+  error?: string;
+};
+
 function relevanceScore(query: string, value: string): number {
   if (value === query) return 0;
   if (value.startsWith(query)) return 1;
   if (value.split(" ").some((word) => word.startsWith(query))) return 2;
   if (value.includes(query)) return 3;
   return Number.POSITIVE_INFINITY;
+}
+
+async function scrapeBySource(source: SourceName, term: string): Promise<SourceResult> {
+  try {
+    if (source === "prezunic") {
+      return { source, offers: await scrapePrezunic(term), ok: true };
+    }
+    if (source === "zonasul") {
+      return { source, offers: await scrapeZonaSul(term), ok: true };
+    }
+    if (source === "extra") {
+      return { source, offers: await scrapeExtra(term), ok: true };
+    }
+    return { source, offers: await scrapeSupermarketDelivery(term), ok: true };
+  } catch (error) {
+    return {
+      source,
+      offers: [],
+      ok: false,
+      error: error instanceof Error ? error.message : "Erro desconhecido"
+    };
+  }
 }
 
 function toSuggestions(term: string, offers: Offer[]): SearchSuggestion[] {
@@ -82,21 +111,36 @@ export async function GET(request: NextRequest) {
   const normalizedTerm = normalizeItemName(termRaw);
 
   try {
-    const [prezunic, zonasul, extra, supermarketdelivery] = await Promise.all([
-      scrapePrezunic(normalizedTerm),
-      scrapeZonaSul(normalizedTerm),
-      scrapeExtra(normalizedTerm),
-      scrapeSupermarketDelivery(normalizedTerm)
-    ]);
+    const sources: SourceName[] = ["prezunic", "zonasul", "extra", "supermarketdelivery"];
+    const sourceResults = await Promise.all(
+      sources.map((source) => scrapeBySource(source, normalizedTerm))
+    );
 
-    const offers = [...prezunic, ...zonasul, ...extra, ...supermarketdelivery].filter((offer) => !offer.isFallback);
+    const offers = sourceResults
+      .flatMap((result) => result.offers)
+      .filter((offer) => !offer.isFallback);
+    const offersBySource = sourceResults.reduce<Record<SourceName, number>>(
+      (acc, result) => {
+        acc[result.source] = result.offers.filter((offer) => !offer.isFallback).length;
+        return acc;
+      },
+      { prezunic: 0, zonasul: 0, extra: 0, supermarketdelivery: 0 }
+    );
     const suggestions = toSuggestions(normalizedTerm, offers);
 
     return NextResponse.json({
       term: termRaw,
       normalizedTerm,
       suggestions,
-      offersCount: offers.length
+      offersCount: offers.length,
+      checkedMarkets: sources.length,
+      checkedSources: sourceResults.map((result) => ({
+        source: result.source,
+        ok: result.ok,
+        offers: offersBySource[result.source],
+        error: result.ok ? null : result.error
+      })),
+      offersBySource
     });
   } catch (error) {
     return NextResponse.json(
