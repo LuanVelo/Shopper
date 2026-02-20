@@ -4,7 +4,7 @@ import { scrapeExtra } from "@/lib/scrapers/extra";
 import { scrapePrezunic } from "@/lib/scrapers/prezunic";
 import { scrapeSupermarketDelivery } from "@/lib/scrapers/supermarketdelivery";
 import { scrapeZonaSul } from "@/lib/scrapers/zonasul";
-import { Offer, Unit } from "@/types";
+import { Offer, SourceName, Unit } from "@/types";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +13,8 @@ type SearchSuggestion = {
   name: string;
   unit: Unit;
   minPrice: number;
+  source: SourceName;
+  productUrl: string | null;
 };
 
 type SuggestionAccumulator = {
@@ -20,6 +22,8 @@ type SuggestionAccumulator = {
   name: string;
   unit: Unit;
   minPrice: number;
+  source: SourceName;
+  productUrl: string | null;
 };
 
 function relevanceScore(query: string, value: string): number {
@@ -50,7 +54,9 @@ function toSuggestions(term: string, offers: Offer[]): SearchSuggestion[] {
         id: key,
         name,
         unit: offer.packageUnit,
-        minPrice: offer.packagePrice
+        minPrice: offer.packagePrice,
+        source: offer.source,
+        productUrl: offer.productUrl ?? null
       });
     }
   }

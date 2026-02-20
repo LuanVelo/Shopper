@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Suspense } from "react";
-import { Loader2, Minus, Plus, Search, X } from "lucide-react";
+import { ExternalLink, Loader2, Minus, Plus, Search, X } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { gsap } from "gsap";
 import { DevModePage } from "./dev-mode";
@@ -12,6 +12,8 @@ type CatalogSuggestion = {
   name: string;
   unit: string;
   minPrice: number;
+  source: string;
+  productUrl: string | null;
 };
 
 type ResultItem = {
@@ -20,6 +22,8 @@ type ResultItem = {
   quantity: number;
   unit: string;
   minPrice: number;
+  source: string;
+  productUrl: string | null;
 };
 
 type UndoAction = {
@@ -242,7 +246,9 @@ function ShopperUiPhaseFlow() {
             ? {
                 ...item,
                 quantity: normalizeQuantity(item.quantity + step, item.unit),
-                minPrice: suggestion.minPrice
+                minPrice: suggestion.minPrice,
+                source: suggestion.source,
+                productUrl: suggestion.productUrl
               }
             : item
         );
@@ -255,7 +261,9 @@ function ShopperUiPhaseFlow() {
           name: suggestion.name,
           quantity: step,
           unit: suggestion.unit,
-          minPrice: suggestion.minPrice
+          minPrice: suggestion.minPrice,
+          source: suggestion.source,
+          productUrl: suggestion.productUrl
         }
       ];
     });
@@ -469,8 +477,22 @@ function ShopperUiPhaseFlow() {
               </div>
 
               {results.map((item) => (
-                <div key={item.id} className="flex items-center gap-3 py-2">
-                  <p className="flex-1 text-[14px] font-normal leading-[14px] text-[#404040]">{item.name}</p>
+                <div key={item.id} className="group flex items-center gap-3 py-2">
+                  <div className="flex flex-1 items-center gap-1.5">
+                    <p className="text-[14px] font-normal leading-[14px] text-[#404040]">{item.name}</p>
+                    {item.productUrl ? (
+                      <a
+                        href={item.productUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex h-4 w-4 items-center justify-center rounded text-[#6f6f6f] opacity-0 transition-opacity hover:text-[#404040] group-hover:opacity-100"
+                        aria-label={`Abrir ${item.name} em nova aba (${item.source})`}
+                        title={`Abrir no site (${item.source})`}
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </a>
+                    ) : null}
+                  </div>
                   <p className="w-[79px] text-right text-[12px] font-normal leading-[12px] text-[#404040]">
                     {CURRENCY.format(item.minPrice)}
                   </p>
